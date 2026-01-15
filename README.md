@@ -4,29 +4,35 @@ Animated mascot companion for Claude Code. A transparent overlay that floats bes
 
 ![Mascot](themes/default/characters/greeting.png)
 
-## Features
+## Installation
 
-- **Reactive States** - 8 character states that respond to Claude's actions (idle, greeting, working, success, error, celebrating, sleeping, farewell)
-- **Floating Animation** - Subtle bobbing motion with glowing aura effect
-- **Sound Effects** - Audio feedback for each state (multi-format support)
-- **Bottom Gradient Fade** - Character fades at bottom so you can read terminal text
-- **Responsive Sizing** - Automatically scales with terminal height
-- **Multi-Instance Support** - Run Claude Code in multiple terminals simultaneously
-- **Smart Visibility** - Only shows when its terminal is focused
+**Inside Claude Code, run:**
 
-## Quick Start
-
-```bash
-# 1. Clone the plugin
-git clone https://github.com/octaviusp/claude-fx-plugin
-
-# 2. Run Claude Code with the plugin
-claude --plugin-dir ./claude-fx-plugin
-
-# 3. Install dependencies when prompted
+```
+/plugin marketplace add octaviusp/claude-fx-plugin
+/plugin install claude-fx-plugin@claude-fx-marketplace
 ```
 
-On first run, a setup check shows required dependencies. Install them and restart Claude Code.
+Done! The mascot will appear on your next session.
+
+### Alternative: Manual Install
+
+```bash
+git clone https://github.com/octaviusp/claude-fx-plugin
+claude --plugin-dir ./claude-fx-plugin
+```
+
+On first run, install dependencies when prompted.
+
+## Features
+
+- **Reactive States** - 8 character states (idle, greeting, working, success, error, celebrating, sleeping, farewell)
+- **Floating Animation** - Subtle bobbing motion with glowing aura effect
+- **Sound Effects** - Audio feedback for each state
+- **Bottom Gradient Fade** - Character fades at bottom for text readability
+- **Responsive Sizing** - Scales with terminal height
+- **Multi-Instance Support** - Multiple terminals simultaneously
+- **Smart Visibility** - Only shows when its terminal is focused
 
 ## Configuration
 
