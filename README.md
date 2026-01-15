@@ -4,7 +4,11 @@ Animated mascot companion for Claude Code. A transparent overlay that floats bes
 
 <!-- To add the demo video: Edit this README on GitHub, drag assets/demo.mov into the editor, and replace this comment with the generated URL -->
 
-![Mascot](themes/default/characters/greeting.png)
+
+https://github.com/user-attachments/assets/587f0788-55ef-4d38-8987-dd6c4b273fbe
+
+
+<img src="themes/default/characters/greeting.png" height="150" alt="Mascot">
 
 ## Installation
 
