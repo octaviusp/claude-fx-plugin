@@ -2,12 +2,14 @@
 """
 Claude FX Overlay - Simple persistent overlay that shows animated GIFs.
 Polls a state file and updates the displayed animation accordingly.
+Supports both local files and URLs.
 """
 
+import io
 import json
 import os
 import sys
-import subprocess
+import urllib.request
 from pathlib import Path
 
 try:
@@ -22,6 +24,7 @@ HOME = Path.home()
 FX_DIR = HOME / '.claude-fx'
 STATE_FILE = FX_DIR / 'state.json'
 PID_FILE = FX_DIR / 'overlay.pid'
+CACHE_DIR = FX_DIR / 'cache'
 
 # Get plugin root from env or default
 PLUGIN_ROOT = Path(os.environ.get(
@@ -58,26 +61,52 @@ def get_terminal_position():
     return {'x': 100, 'y': 100, 'w': 800, 'h': 600}
 
 
+def is_url(path: str) -> bool:
+    """Check if path is a URL."""
+    return path.startswith('http://') or path.startswith('https://')
+
+
+def load_image_from_url(url: str) -> Image.Image:
+    """Download and load image from URL."""
+    req = urllib.request.Request(
+        url,
+        headers={'User-Agent': 'Claude-FX-Plugin/1.0'}
+    )
+    with urllib.request.urlopen(req, timeout=10) as response:
+        data = response.read()
+    return Image.open(io.BytesIO(data))
+
+
 class GifPlayer:
     """Handles GIF frame extraction and cycling."""
 
-    def __init__(self, path: Path):
+    def __init__(self, source: str, theme_path: Path = None):
         self.frames = []
         self.durations = []
         self.current = 0
-        self.load(path)
+        self.load(source, theme_path)
 
-    def load(self, path: Path):
-        """Load GIF and extract frames."""
+    def load(self, source: str, theme_path: Path = None):
+        """Load GIF from file path or URL."""
         self.frames = []
         self.durations = []
         self.current = 0
-
-        if not path.exists():
-            return
 
         try:
-            img = Image.open(path)
+            if is_url(source):
+                img = load_image_from_url(source)
+            else:
+                # Resolve relative path from theme
+                if theme_path and not os.path.isabs(source):
+                    path = theme_path / source
+                else:
+                    path = Path(source)
+                if not path.exists():
+                    print(f"File not found: {path}")
+                    return
+                img = Image.open(path)
+
+            # Extract all frames
             while True:
                 frame = img.copy().convert('RGBA')
                 self.frames.append(frame)
@@ -131,9 +160,10 @@ class Overlay:
         )
         self.canvas.pack()
 
-        # Load settings
+        # Load settings and manifest
         self.settings = self.load_settings()
         self.theme_path = PLUGIN_ROOT / 'themes' / 'default'
+        self.manifest = self.load_manifest()
 
         # State tracking
         self.current_state = 'idle'
@@ -163,6 +193,16 @@ class Overlay:
                 pass
         return {}
 
+    def load_manifest(self) -> dict:
+        """Load theme manifest."""
+        manifest_file = self.theme_path / 'manifest.json'
+        if manifest_file.exists():
+            try:
+                return json.loads(manifest_file.read_text())
+            except Exception:
+                pass
+        return {}
+
     def position_window(self):
         """Position overlay next to terminal."""
         pos = get_terminal_position()
@@ -172,13 +212,23 @@ class Overlay:
         self.root.geometry(f"{self.size}x{self.size}+{x}+{y}")
 
     def load_state_gif(self, state: str):
-        """Load GIF for a given state."""
-        gif_path = self.theme_path / 'characters' / f'{state}.gif'
-        if not gif_path.exists():
-            gif_path = self.theme_path / 'characters' / 'idle.gif'
-        if gif_path.exists():
-            self.gif_player = GifPlayer(gif_path)
+        """Load GIF for a given state from manifest or fallback."""
         self.current_state = state
+
+        # Try to get animation from manifest
+        states = self.manifest.get('states', {})
+        state_config = states.get(state, states.get('idle', {}))
+        animation = state_config.get('animation', '')
+
+        if animation:
+            self.gif_player = GifPlayer(animation, self.theme_path)
+        else:
+            # Fallback to local file
+            gif_path = self.theme_path / 'characters' / f'{state}.gif'
+            if not gif_path.exists():
+                gif_path = self.theme_path / 'characters' / 'idle.gif'
+            if gif_path.exists():
+                self.gif_player = GifPlayer(str(gif_path))
 
     def animate(self):
         """Update animation frame."""
