@@ -1,7 +1,7 @@
 {
   "name": "default",
   "description": "Default waifu theme with transparent PNG mascot",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "states": {
     "idle": {
       "animation": "characters/idle.png",
@@ -9,27 +9,35 @@
     },
     "greeting": {
       "animation": "characters/greeting.png",
-      "sound": "sounds/greeting.wav"
+      "sound": "sounds/greeting.aiff"
     },
     "working": {
       "animation": "characters/working.png",
-      "sound": "sounds/working.wav"
+      "sound": "sounds/working.aiff"
     },
     "success": {
       "animation": "characters/success.png",
-      "sound": "sounds/success.wav"
+      "sound": "sounds/success.aiff"
     },
     "error": {
       "animation": "characters/error.png",
-      "sound": "sounds/error.wav"
+      "sound": "sounds/error.aiff"
     },
     "celebrating": {
       "animation": "characters/celebrating.png",
-      "sound": "sounds/celebration.wav"
+      "sound": "sounds/celebrating.aiff"
     },
     "sleeping": {
       "animation": "characters/sleeping.png",
       "sound": null
+    },
+    "farewell": {
+      "animation": "characters/greeting.png",
+      "sound": "sounds/farewell.aiff"
     }
+  },
+  "audio": {
+    "supportedFormats": [".wav", ".mp3", ".m4a", ".aiff", ".aif", ".caf", ".aac"],
+    "notes": "Sound files should match PNG names (e.g., greeting.png -> greeting.wav)"
   }
 }

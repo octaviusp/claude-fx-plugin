@@ -4,9 +4,9 @@ Claude FX Hook Handler - Receives hook events and updates overlay state.
 Includes setup checking on SessionStart.
 """
 
-import fcntl
 import json
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -20,17 +20,9 @@ FX_DIR = HOME / '.claude-fx'
 SETUP_OK_FILE = FX_DIR / 'setup_ok'
 
 
-def get_session_paths(window_id: int) -> tuple[Path, Path]:
-    """Get session-specific state and PID file paths."""
-    return (
-        FX_DIR / f'state-{window_id}.json',
-        FX_DIR / f'overlay-{window_id}.pid'
-    )
-
-
-def get_lock_file(window_id: int) -> Path:
-    """Get lock file path for a session."""
-    return FX_DIR / f'overlay-{window_id}.lock'
+def get_socket_path(session_id: int) -> Path:
+    """Get socket file path for a session."""
+    return FX_DIR / f'sock-{session_id}.sock'
 
 
 def get_session_id() -> int | None:
@@ -204,78 +196,101 @@ def detect_error(data: dict) -> bool:
     return any(p in output for p in error_patterns)
 
 
-def write_state(state: str, tool: str = None):
-    """Write state to session-specific state file."""
+def send_state_to_overlay(state: str, tool: str = None) -> bool:
+    """Send state update to overlay via socket. Returns True if successful."""
     session_id = get_session_id()
     if not session_id:
-        return  # Can't determine session
-    state_file, _ = get_session_paths(session_id)
-    FX_DIR.mkdir(parents=True, exist_ok=True)
-    # Include terminal info for visibility tracking
+        return False
+
+    socket_path = get_socket_path(session_id)
+    if not socket_path.exists():
+        return False
+
+    # Get terminal info for visibility tracking
     info = get_terminal_info() or {}
-    state_file.write_text(json.dumps({
+
+    # Build message
+    msg = {
+        'cmd': 'SET_STATE',
         'state': state,
         'tool': tool,
         'terminal_pid': info.get('pid'),
-        'terminal_window_id': info.get('window_id'),
-        'timestamp': int(__import__('time').time() * 1000)
-    }))
+        'terminal_window_id': info.get('window_id')
+    }
 
-
-def is_overlay_running() -> bool:
-    """Check if overlay is running using lock file."""
-    session_id = get_session_id()
-    if not session_id:
-        return False
-
-    lock_file = get_lock_file(session_id)
-    if not lock_file.exists():
-        return False
-
-    # Try to acquire lock - if we can't, overlay holds it
     try:
-        fd = os.open(str(lock_file), os.O_RDWR)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            # Got lock - no overlay running, release it
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
-            return False
-        except BlockingIOError:
-            os.close(fd)
-            return True  # Lock held by overlay
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(0.5)  # 500ms timeout - don't block Claude
+        sock.connect(str(socket_path))
+        sock.sendall(f'{json.dumps(msg)}\n'.encode('utf-8'))
+        response = sock.recv(1024).decode('utf-8').strip()
+        sock.close()
+        return response.startswith('{"status": "ok"}')
+    except (socket.timeout, ConnectionRefusedError, FileNotFoundError):
+        return False
     except Exception:
         return False
 
 
-def stop_overlay():
-    """Stop the session-specific overlay process and clean up files."""
-    window_id = get_session_id()
-    if not window_id:
+def is_overlay_running() -> bool:
+    """Check if overlay is running by testing socket connection."""
+    session_id = get_session_id()
+    if not session_id:
+        return False
+
+    socket_path = get_socket_path(session_id)
+    if not socket_path.exists():
+        return False
+
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(0.1)  # Fast check
+        sock.connect(str(socket_path))
+        sock.sendall(b'{"cmd": "PING"}\n')
+        response = sock.recv(64).decode('utf-8').strip()
+        sock.close()
+        return response == 'PONG'
+    except Exception:
+        return False
+
+
+def shutdown_overlay():
+    """Send shutdown command to overlay via socket."""
+    session_id = get_session_id()
+    if not session_id:
         return
-    state_file, pid_file = get_session_paths(window_id)
-    lock_file = get_lock_file(window_id)
 
-    # Try to get PID from lock file first, then fall back to pid file
-    pid = None
-    for f in [lock_file, pid_file]:
-        if f.exists():
+    socket_path = get_socket_path(session_id)
+    if not socket_path.exists():
+        return
+
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(1.0)
+        sock.connect(str(socket_path))
+        sock.sendall(b'{"cmd": "SHUTDOWN"}\n')
+        sock.recv(1024)  # Wait for ack
+        sock.close()
+    except Exception:
+        pass  # Best effort
+
+
+def cleanup_legacy_files():
+    """Remove old state/pid/lock files from file-based IPC era."""
+    if not FX_DIR.exists():
+        return
+
+    patterns = [
+        'state-*.json', 'overlay-*.pid', 'overlay-*.lock',
+        'state.json', 'overlay.pid', 'overlay.lock'
+    ]
+
+    for pattern in patterns:
+        for f in FX_DIR.glob(pattern):
             try:
-                pid = int(f.read_text().strip())
-                break
-            except (ValueError, OSError):
+                f.unlink()
+            except Exception:
                 pass
-
-    if pid:
-        try:
-            os.kill(pid, 15)  # SIGTERM
-        except (ProcessLookupError, PermissionError):
-            pass
-
-    # Clean up all files
-    pid_file.unlink(missing_ok=True)
-    lock_file.unlink(missing_ok=True)
-    state_file.unlink(missing_ok=True)
 
 
 def start_overlay():
@@ -297,8 +312,49 @@ def start_overlay():
         )
 
 
+def load_manifest(theme: str) -> dict:
+    """Load theme manifest.json."""
+    manifest_path = PLUGIN_ROOT / 'themes' / theme / 'manifest.json'
+    if manifest_path.exists():
+        try:
+            return json.loads(manifest_path.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+# Supported audio formats on macOS (afplay)
+AUDIO_EXTENSIONS = ('.wav', '.mp3', '.m4a', '.aiff', '.aif', '.caf', '.aac')
+
+
+def find_sound_file(state: str, theme: str, manifest: dict) -> Path | None:
+    """
+    Find sound file for state. Priority:
+    1. Manifest-specified path
+    2. Sound file matching state name (e.g., greeting.wav for 'greeting')
+    """
+    sounds_dir = PLUGIN_ROOT / 'themes' / theme / 'sounds'
+
+    # Check manifest first
+    state_cfg = manifest.get('states', {}).get(state, {})
+    manifest_sound = state_cfg.get('sound')
+    if manifest_sound:
+        sound_path = PLUGIN_ROOT / 'themes' / theme / manifest_sound
+        if sound_path.exists():
+            return sound_path
+
+    # Fall back to state-named file (e.g., greeting.wav, greeting.mp3)
+    if sounds_dir.exists():
+        for ext in AUDIO_EXTENSIONS:
+            sound_path = sounds_dir / f'{state}{ext}'
+            if sound_path.exists():
+                return sound_path
+
+    return None
+
+
 def play_sound(state: str, settings: dict):
-    """Play sound for state (macOS)."""
+    """Play sound for state (macOS). Uses afplay for native playback."""
     # Check if audio is enabled
     audio_cfg = settings.get('audio', {})
     if not audio_cfg.get('enabled', True):
@@ -307,27 +363,21 @@ def play_sound(state: str, settings: dict):
     volume = audio_cfg.get('volume', 0.5)
     theme = settings.get('theme', 'default')
 
-    sounds = {
-        'greeting': 'greeting.wav',
-        'working': 'working.wav',
-        'success': 'success.wav',
-        'error': 'error.wav',
-        'celebrating': 'celebration.wav',
-    }
-    sound_file = sounds.get(state)
-    if not sound_file:
+    # Load manifest and find sound file
+    manifest = load_manifest(theme)
+    sound_path = find_sound_file(state, theme, manifest)
+
+    if not sound_path:
         return
 
-    sound_path = PLUGIN_ROOT / 'themes' / theme / 'sounds' / sound_file
-    if sound_path.exists():
-        try:
-            subprocess.Popen(
-                ['afplay', '-v', str(volume), str(sound_path)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-        except Exception:
-            pass
+    try:
+        subprocess.Popen(
+            ['afplay', '-v', str(volume), str(sound_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+    except Exception:
+        pass
 
 
 def main():
@@ -341,6 +391,9 @@ def main():
 
     # On SessionStart, check setup first
     if event == 'SessionStart':
+        # Clean up legacy files from old file-based IPC
+        cleanup_legacy_files()
+
         if not check_setup():
             # Setup incomplete - message already shown by setup.py
             # Don't start overlay, just exit
@@ -362,21 +415,25 @@ def main():
     state = map_event_to_state(event, is_error)
     tool = data.get('tool_name')
 
-    # Handle SessionEnd specially - show farewell then kill overlay
+    # Handle SessionEnd specially - show farewell then shutdown overlay
     if event == 'SessionEnd':
-        write_state(state, tool)
+        send_state_to_overlay(state, tool)
         play_sound('greeting', settings)  # Play greeting sound for goodbye
         import time
         time.sleep(3.5)  # Wait for animation
-        stop_overlay()
+        shutdown_overlay()
         sys.exit(0)
 
-    # Write state file
-    write_state(state, tool)
+    # Send state to overlay via socket
+    sent = send_state_to_overlay(state, tool)
 
     # Start overlay if not running and enabled
-    if overlay_enabled and not is_overlay_running():
+    if overlay_enabled and not sent and not is_overlay_running():
         start_overlay()
+        # Give overlay time to start, then send state again
+        import time
+        time.sleep(0.3)
+        send_state_to_overlay(state, tool)
 
     # Play sound
     play_sound(state, settings)
