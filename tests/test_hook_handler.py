@@ -2,6 +2,7 @@
 
 import json
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -471,12 +472,17 @@ class TestGetTerminalInfo:
 
         mocker.patch("subprocess.run", side_effect=ps_side_effect)
 
-        # Reset cache and simulate cached result
-        handler._terminal_info = {"pid": 12345, "window_id": 54321}
+        # Reset cache and simulate cached result (with valid TTL)
+        handler._terminal_info = {
+            "shell_pid": 12345,
+            "terminal_pid": 67890,
+            "window_id": 54321
+        }
+        handler._terminal_info_time = time.time()  # Set valid cache time
 
         result = handler.get_terminal_info()
         assert result is not None
-        assert result["pid"] == 12345
+        assert result["shell_pid"] == 12345
         assert result["window_id"] == 54321
 
     def test_get_terminal_info_no_terminal(self, mocker, handler):
@@ -495,12 +501,17 @@ class TestGetTerminalInfo:
 
     def test_get_terminal_info_caching(self, mocker, handler):
         """Terminal info is cached across calls."""
-        handler._terminal_info = {"pid": 11111, "window_id": 22222}
+        handler._terminal_info = {
+            "shell_pid": 11111,
+            "terminal_pid": 33333,
+            "window_id": 22222
+        }
+        handler._terminal_info_time = time.time()  # Set valid cache time
 
         mock_run = mocker.patch("subprocess.run")
 
         result = handler.get_terminal_info()
-        assert result["pid"] == 11111
+        assert result["shell_pid"] == 11111
         mock_run.assert_not_called()
 
 
