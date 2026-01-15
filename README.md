@@ -9,8 +9,14 @@ Animated mascot companion for Claude Code. A transparent overlay that floats bes
 **Inside Claude Code, run:**
 
 ```
+[WARNING: SessionStart hook sometimes doesn't work well with plugins: #ISSUE: https://github.com/anthropics/claude-code/issues/10997]
+
 /plugin marketplace add octaviusp/claude-fx-plugin
 /plugin install claude-fx-plugin@claude-fx-marketplace
+
+Run `/claude-fx:setup` to check dependencies and ask claude to help you setup everything.
+
+Reload claude-session, due to the bug of 10997# cc issue, say "hello" and then the render will be there.
 ```
 
 Done! The mascot will appear on your next session.
@@ -176,7 +182,7 @@ claude-fx-plugin/
 | Platform | Status |
 |----------|--------|
 | macOS | Full support |
-| Linux | Not supported |
+| Linux | Not supported , COMING SOON |
 | Windows | Not supported |
 
 ## License
