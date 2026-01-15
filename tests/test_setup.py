@@ -275,9 +275,11 @@ class TestCheckAll:
         mock_pil = MagicMock()
         mock_pil.__version__ = "10.0.0"
         mock_quartz = MagicMock()
+        mock_cocoa = MagicMock()
         mocker.patch.dict(sys.modules, {
             "PIL": mock_pil,
             "Quartz": mock_quartz,
+            "Cocoa": mock_cocoa,
         })
 
         import setup
