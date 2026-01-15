@@ -406,7 +406,8 @@ def cleanup_legacy_files():
 
     patterns = [
         'state-*.json', 'overlay-*.pid', 'overlay-*.lock',
-        'state.json', 'overlay.pid', 'overlay.lock'
+        'state.json', 'overlay.pid', 'overlay.lock',
+        'overlay.sock'  # Legacy socket from when SESSION_ID wasn't set
     ]
 
     for pattern in patterns:

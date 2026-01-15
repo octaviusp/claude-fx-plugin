@@ -59,9 +59,9 @@ SESSION_ID = os.environ.get('CLAUDE_FX_SESSION')
 
 def get_socket_path() -> Path:
     """Get socket file path for this session."""
-    if SESSION_ID:
-        return FX_DIR / f'sock-{SESSION_ID}.sock'
-    return FX_DIR / 'overlay.sock'
+    if not SESSION_ID:
+        raise RuntimeError("CLAUDE_FX_SESSION required for session isolation")
+    return FX_DIR / f'sock-{SESSION_ID}.sock'
 
 
 PLUGIN_ROOT = Path(os.environ.get(
