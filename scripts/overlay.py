@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """
-Claude FX Overlay - Simple persistent overlay that shows animated GIFs.
-Polls a state file and updates the displayed animation accordingly.
-Supports both local files and URLs.
+Claude FX Overlay - True transparent overlay using PyObjC (macOS).
+Displays PNG/GIF mascot with real transparency - no background window.
 """
 
-import io
 import json
 import os
 import sys
-import urllib.request
 from pathlib import Path
 
 try:
-    import tkinter as tk
-    from PIL import Image, ImageTk
+    import objc
+    from Cocoa import (
+        NSApplication, NSWindow, NSView, NSImage, NSColor, NSTimer,
+        NSMakeRect, NSBackingStoreBuffered, NSFloatingWindowLevel,
+        NSCompositingOperationSourceOver, NSScreen,
+    )
+    from Quartz import (
+        CGWindowListCopyWindowInfo,
+        kCGWindowListOptionOnScreenOnly,
+        kCGNullWindowID,
+    )
 except ImportError:
-    print("Required: pip install pillow")
+    print("Required: pip3 install pyobjc-framework-Cocoa")
     sys.exit(1)
 
 # Paths
@@ -24,23 +30,18 @@ HOME = Path.home()
 FX_DIR = HOME / '.claude-fx'
 STATE_FILE = FX_DIR / 'state.json'
 PID_FILE = FX_DIR / 'overlay.pid'
-CACHE_DIR = FX_DIR / 'cache'
 
-# Get plugin root from env or default
 PLUGIN_ROOT = Path(os.environ.get(
     'CLAUDE_FX_ROOT',
     Path(__file__).parent.parent
 ))
 
+MAX_HEIGHT = 350
+
 
 def get_terminal_position():
-    """Get active terminal window position (macOS)."""
+    """Get active terminal window position."""
     try:
-        from Quartz import (
-            CGWindowListCopyWindowInfo,
-            kCGWindowListOptionOnScreenOnly,
-            kCGNullWindowID
-        )
         terminals = ['Terminal', 'iTerm', 'Alacritty', 'kitty', 'Warp']
         windows = CGWindowListCopyWindowInfo(
             kCGWindowListOptionOnScreenOnly, kCGNullWindowID
@@ -57,143 +58,91 @@ def get_terminal_position():
                 }
     except Exception:
         pass
-    # Fallback: bottom-right of screen
     return {'x': 100, 'y': 100, 'w': 800, 'h': 600}
 
 
-def is_url(path: str) -> bool:
-    """Check if path is a URL."""
-    return path.startswith('http://') or path.startswith('https://')
+class ImageView(NSView):
+    """Custom view that draws an image with transparency."""
 
+    def initWithFrame_(self, frame):
+        self = objc.super(ImageView, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        self.image = None
+        return self
 
-def load_image_from_url(url: str) -> Image.Image:
-    """Download and load image from URL."""
-    req = urllib.request.Request(
-        url,
-        headers={'User-Agent': 'Claude-FX-Plugin/1.0'}
-    )
-    with urllib.request.urlopen(req, timeout=10) as response:
-        data = response.read()
-    return Image.open(io.BytesIO(data))
+    def setImage_(self, image):
+        self.image = image
+        self.setNeedsDisplay_(True)
 
-
-class GifPlayer:
-    """Handles GIF frame extraction and cycling."""
-
-    def __init__(self, source: str, theme_path: Path = None):
-        self.frames = []
-        self.durations = []
-        self.current = 0
-        self.load(source, theme_path)
-
-    def load(self, source: str, theme_path: Path = None):
-        """Load GIF from file path or URL."""
-        self.frames = []
-        self.durations = []
-        self.current = 0
-
-        try:
-            if is_url(source):
-                img = load_image_from_url(source)
-            else:
-                # Resolve relative path from theme
-                if theme_path and not os.path.isabs(source):
-                    path = theme_path / source
-                else:
-                    path = Path(source)
-                if not path.exists():
-                    print(f"File not found: {path}")
-                    return
-                img = Image.open(path)
-
-            # Extract all frames
-            while True:
-                frame = img.copy().convert('RGBA')
-                self.frames.append(frame)
-                self.durations.append(img.info.get('duration', 100))
-                img.seek(img.tell() + 1)
-        except EOFError:
-            pass
-        except Exception as e:
-            print(f"Error loading GIF: {e}")
-
-    def next_frame(self) -> tuple:
-        """Get next frame and its duration."""
-        if not self.frames:
-            return None, 100
-        frame = self.frames[self.current]
-        duration = self.durations[self.current]
-        self.current = (self.current + 1) % len(self.frames)
-        return frame, duration
+    def drawRect_(self, rect):
+        if self.image:
+            # Draw image scaled to fit view
+            bounds = self.bounds()
+            self.image.drawInRect_fromRect_operation_fraction_(
+                bounds,
+                NSMakeRect(0, 0, 0, 0),  # Use full source
+                NSCompositingOperationSourceOver,
+                1.0
+            )
 
 
 class Overlay:
     """Transparent overlay window with animated character."""
 
     def __init__(self):
-        self.root = tk.Tk()
-        self.root.title("Claude FX")
+        self.app = NSApplication.sharedApplication()
 
-        # Transparent, borderless, always-on-top
-        self.root.overrideredirect(True)
-        self.root.attributes('-topmost', True)
-
-        # Size
-        self.size = 150
-
-        # macOS transparency using color key (black becomes invisible)
-        self.transparent_color = 'black'
-        try:
-            self.root.config(bg=self.transparent_color)
-            self.root.wm_attributes('-transparent', True)
-        except Exception:
-            # Fallback for Linux - use alpha
-            self.root.attributes('-alpha', 0.95)
-            self.root.config(bg='#1a1a1a')
-
-        # Canvas with transparent background
-        self.canvas = tk.Canvas(
-            self.root,
-            width=self.size,
-            height=self.size,
-            bg=self.transparent_color,
-            highlightthickness=0,
-            bd=0
-        )
-        self.canvas.pack()
-
-        # Load settings and manifest
-        self.settings = self.load_settings()
+        # Load manifest
         self.theme_path = PLUGIN_ROOT / 'themes' / 'default'
         self.manifest = self.load_manifest()
 
+        # Calculate size from first image
+        self.width = 200
+        self.height = MAX_HEIGHT
+        self.calculate_size('idle')
+
+        # Get terminal position
+        pos = get_terminal_position()
+        x = pos['x'] + pos['w'] - self.width - 20
+        # macOS y is from bottom, convert from top
+        screen_height = NSScreen.mainScreen().frame().size.height
+        y = screen_height - pos['y'] - 40 - self.height
+
+        # Create borderless transparent window
+        rect = NSMakeRect(x, y, self.width, self.height)
+        style = 0  # NSBorderlessWindowMask
+        self.window = NSWindow.alloc()
+        self.window = self.window.initWithContentRect_styleMask_backing_defer_(
+            rect, style, NSBackingStoreBuffered, False
+        )
+
+        # Make transparent
+        self.window.setOpaque_(False)
+        self.window.setBackgroundColor_(NSColor.clearColor())
+        self.window.setLevel_(NSFloatingWindowLevel)
+        self.window.setHasShadow_(False)
+        self.window.setIgnoresMouseEvents_(True)  # Click-through
+
+        # Create image view
+        self.image_view = ImageView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, self.width, self.height)
+        )
+        self.window.setContentView_(self.image_view)
+
         # State tracking
         self.current_state = 'idle'
-        self.gif_player = None
-        self.photo = None
+        self.load_state_image('idle')
 
-        # Position near terminal
-        self.position_window()
+        # Show window
+        self.window.makeKeyAndOrderFront_(None)
 
-        # Load initial state
-        self.load_state_gif('idle')
-
-        # Start animation and polling loops
-        self.animate()
-        self.poll_state()
+        # Start polling timer (every 0.2 seconds)
+        m = 'scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_'
+        self.timer = getattr(NSTimer, m)(0.2, self, 'pollState:', None, True)
 
         # Write PID
         self.write_pid()
-
-    def load_settings(self) -> dict:
-        """Load settings from settings-fx.json."""
-        settings_file = PLUGIN_ROOT / 'settings-fx.json'
-        if settings_file.exists():
-            try:
-                return json.loads(settings_file.read_text())
-            except Exception:
-                pass
-        return {}
 
     def load_manifest(self) -> dict:
         """Load theme manifest."""
@@ -205,63 +154,62 @@ class Overlay:
                 pass
         return {}
 
-    def position_window(self):
-        """Position overlay at top-right of terminal."""
-        pos = get_terminal_position()
-        # Top-right of terminal (below title bar)
-        x = pos['x'] + pos['w'] - self.size - 20
-        y = pos['y'] + 40
-        self.root.geometry(f"{self.size}x{self.size}+{x}+{y}")
-
-    def load_state_gif(self, state: str):
-        """Load GIF for a given state from manifest or fallback."""
-        self.current_state = state
-
-        # Try to get animation from manifest
+    def calculate_size(self, state: str):
+        """Calculate image size maintaining aspect ratio."""
         states = self.manifest.get('states', {})
         state_config = states.get(state, states.get('idle', {}))
         animation = state_config.get('animation', '')
 
         if animation:
-            self.gif_player = GifPlayer(animation, self.theme_path)
-        else:
-            # Fallback to local file
-            gif_path = self.theme_path / 'characters' / f'{state}.gif'
-            if not gif_path.exists():
-                gif_path = self.theme_path / 'characters' / 'idle.gif'
-            if gif_path.exists():
-                self.gif_player = GifPlayer(str(gif_path))
+            img_path = self.theme_path / animation
+            if img_path.exists():
+                img = NSImage.alloc().initWithContentsOfFile_(str(img_path))
+                if img:
+                    size = img.size()
+                    if size.height > MAX_HEIGHT:
+                        ratio = MAX_HEIGHT / size.height
+                        self.width = int(size.width * ratio)
+                        self.height = MAX_HEIGHT
+                    else:
+                        self.width = int(size.width)
+                        self.height = int(size.height)
 
-    def animate(self):
-        """Update animation frame."""
-        if self.gif_player and self.gif_player.frames:
-            frame, duration = self.gif_player.next_frame()
-            if frame:
-                # Resize to fit
-                frame = frame.resize((self.size, self.size), Image.LANCZOS)
-                self.photo = ImageTk.PhotoImage(frame)
-                self.canvas.delete('all')
-                self.canvas.create_image(
-                    self.size // 2, self.size // 2,
-                    image=self.photo
-                )
-            self.root.after(duration, self.animate)
-        else:
-            self.root.after(100, self.animate)
+    def load_state_image(self, state: str):
+        """Load image for a given state."""
+        self.current_state = state
 
-    def poll_state(self):
-        """Check state file for updates."""
+        states = self.manifest.get('states', {})
+        state_config = states.get(state, states.get('idle', {}))
+        animation = state_config.get('animation', '')
+
+        if animation:
+            img_path = self.theme_path / animation
+            if img_path.exists():
+                img = NSImage.alloc().initWithContentsOfFile_(str(img_path))
+                if img:
+                    # Scale image
+                    img.setSize_((self.width, self.height))
+                    self.image_view.setImage_(img)
+
+    def pollState_(self, timer):
+        """Check state file for updates (called by NSTimer)."""
         try:
             if STATE_FILE.exists():
                 data = json.loads(STATE_FILE.read_text())
                 new_state = data.get('state', 'idle')
                 if new_state != self.current_state:
-                    self.load_state_gif(new_state)
-                    # Reposition in case terminal moved
-                    self.position_window()
+                    self.calculate_size(new_state)
+                    self.load_state_image(new_state)
+                    # Resize window
+                    frame = self.window.frame()
+                    frame.size.width = self.width
+                    frame.size.height = self.height
+                    self.window.setFrame_display_(frame, True)
+                    self.image_view.setFrame_(
+                        NSMakeRect(0, 0, self.width, self.height)
+                    )
         except Exception:
             pass
-        self.root.after(100, self.poll_state)
 
     def write_pid(self):
         """Write PID file."""
@@ -271,7 +219,7 @@ class Overlay:
     def run(self):
         """Start the overlay."""
         try:
-            self.root.mainloop()
+            self.app.run()
         finally:
             if PID_FILE.exists():
                 PID_FILE.unlink()
