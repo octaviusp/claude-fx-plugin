@@ -43,6 +43,17 @@ DEFAULT_MAX_HEIGHT = 350
 DEFAULT_OFFSET_X = 20
 DEFAULT_OFFSET_Y = 40
 
+# State durations (None = permanent, number = seconds before returning to idle)
+STATE_DURATIONS = {
+    'idle': None,
+    'greeting': 3.0,
+    'working': None,
+    'success': 3.0,
+    'error': 3.0,
+    'celebrating': 3.0,
+    'sleeping': None,
+}
+
 
 def load_settings() -> dict:
     """Load settings from settings-fx.json."""
@@ -102,6 +113,28 @@ def is_terminal_window_visible(terminal_pid: int, window_id: int) -> bool:
         return True  # Fallback if no window ID
     except Exception:
         return True
+
+
+def get_terminal_window_position(window_id: int) -> dict | None:
+    """Get position of specific terminal window by ID."""
+    if not window_id:
+        return None
+    try:
+        windows = CGWindowListCopyWindowInfo(
+            kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+        )
+        for w in windows:
+            if w.get('kCGWindowNumber') == window_id:
+                b = w.get('kCGWindowBounds', {})
+                return {
+                    'x': int(b.get('X', 0)),
+                    'y': int(b.get('Y', 0)),
+                    'w': int(b.get('Width', 800)),
+                    'h': int(b.get('Height', 600))
+                }
+    except Exception:
+        pass
+    return None
 
 
 class ImageView(NSView):
@@ -171,20 +204,26 @@ class Overlay:
         self.window.setHasShadow_(False)
         self.window.setIgnoresMouseEvents_(True)  # Click-through
 
-        # Create image view
-        self.image_view = ImageView.alloc().initWithFrame_(
-            NSMakeRect(0, 0, self.width, self.height)
-        )
-        self.window.setContentView_(self.image_view)
+        # Create dual image views for crossfade
+        content_rect = NSMakeRect(0, 0, self.width, self.height)
+        self.content_view = NSView.alloc().initWithFrame_(content_rect)
+        self.image_view_back = ImageView.alloc().initWithFrame_(content_rect)
+        self.image_view_front = ImageView.alloc().initWithFrame_(content_rect)
+        self.image_view_back.setAlphaValue_(0.0)
+        self.content_view.addSubview_(self.image_view_back)
+        self.content_view.addSubview_(self.image_view_front)
+        self.window.setContentView_(self.content_view)
 
         # State tracking
         self.current_state = 'idle'
-        self.load_state_image('idle')
+        self.pending_idle_timer = None
+        self.load_state_image('idle', crossfade=False)
 
         # Visibility tracking
         self.terminal_pid = None
         self.terminal_window_id = None
         self.is_visible = True
+        self.last_terminal_pos = None
         self.show_only_when_active = overlay_cfg.get(
             'showOnlyWhenTerminalActive', True
         )
@@ -193,9 +232,9 @@ class Overlay:
         # Show window
         self.window.makeKeyAndOrderFront_(None)
 
-        # Start polling timer (every 0.2 seconds)
+        # Start polling timer (every 0.016 seconds = 60fps for smooth movement)
         m = 'scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_'
-        self.timer = getattr(NSTimer, m)(0.2, self, 'pollState:', None, True)
+        self.timer = getattr(NSTimer, m)(0.016, self, 'pollState:', None, True)
 
         # Write PID
         self.write_pid()
@@ -250,7 +289,7 @@ class Overlay:
                         self.width = int(size.width)
                         self.height = int(size.height)
 
-    def load_state_image(self, state: str):
+    def load_state_image(self, state: str, crossfade: bool = True):
         """Load image for a given state."""
         self.current_state = state
 
@@ -265,7 +304,85 @@ class Overlay:
                 if img:
                     # Scale image
                     img.setSize_((self.width, self.height))
-                    self.image_view.setImage_(img)
+                    if crossfade and self.fade_animation:
+                        self.crossfade_to_image(img)
+                    else:
+                        self.image_view_front.setImage_(img)
+
+    def crossfade_to_image(self, new_image):
+        """Smoothly transition to new image."""
+        # Load new image into back view
+        self.image_view_back.setImage_(new_image)
+
+        # Animate crossfade
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.currentContext().setDuration_(0.2)
+        self.image_view_front.animator().setAlphaValue_(0.0)
+        self.image_view_back.animator().setAlphaValue_(1.0)
+        NSAnimationContext.endGrouping()
+
+        # Swap references after animation
+        timer_method = 'scheduledTimerWithTimeInterval_' \
+            'target_selector_userInfo_repeats_'
+        getattr(NSTimer, timer_method)(
+            0.25, self, 'swapImageViews:', None, False
+        )
+
+    def swapImageViews_(self, timer):
+        """Swap front/back views after crossfade."""
+        self.image_view_front, self.image_view_back = \
+            self.image_view_back, self.image_view_front
+        self.image_view_front.setAlphaValue_(1.0)
+        self.image_view_back.setAlphaValue_(0.0)
+
+    def change_state(self, new_state: str):
+        """Change to new state with duration handling."""
+        # Cancel any pending idle transition
+        if self.pending_idle_timer:
+            self.pending_idle_timer.invalidate()
+            self.pending_idle_timer = None
+
+        # Calculate size and load image
+        self.calculate_size(new_state)
+        self.load_state_image(new_state)
+        self.resize_window()
+
+        # Schedule return to idle if temporal state
+        duration = STATE_DURATIONS.get(new_state)
+        if duration:
+            timer_method = 'scheduledTimerWithTimeInterval_' \
+                'target_selector_userInfo_repeats_'
+            self.pending_idle_timer = getattr(NSTimer, timer_method)(
+                duration, self, 'returnToIdle:', None, False
+            )
+
+    def returnToIdle_(self, timer):
+        """Auto-transition back to idle state."""
+        self.pending_idle_timer = None
+        if self.current_state not in ['idle', 'working', 'sleeping']:
+            self.change_state('idle')
+
+    def resize_window(self):
+        """Resize window and image views to current size."""
+        frame = self.window.frame()
+        frame.size.width = self.width
+        frame.size.height = self.height
+        self.window.setFrame_display_(frame, True)
+        view_rect = NSMakeRect(0, 0, self.width, self.height)
+        self.content_view.setFrame_(view_rect)
+        self.image_view_front.setFrame_(view_rect)
+        self.image_view_back.setFrame_(view_rect)
+
+    def update_position(self, pos: dict):
+        """Update overlay position to follow terminal."""
+        screen_height = NSScreen.mainScreen().frame().size.height
+        x = pos['x'] + pos['w'] - self.width - self.offset_x
+        y = screen_height - pos['y'] - self.offset_y - self.height
+
+        frame = self.window.frame()
+        frame.origin.x = x
+        frame.origin.y = y
+        self.window.setFrame_display_(frame, True)
 
     def pollState_(self, timer):
         """Check state file for updates (called by NSTimer)."""
@@ -289,18 +406,18 @@ class Overlay:
                     elif not should_show and self.is_visible:
                         self.fadeOut()
 
+                # Track terminal position (follow window movement)
+                if self.is_visible and self.terminal_window_id:
+                    current_pos = get_terminal_window_position(
+                        self.terminal_window_id
+                    )
+                    if current_pos and current_pos != self.last_terminal_pos:
+                        self.last_terminal_pos = current_pos
+                        self.update_position(current_pos)
+
                 # Update state if visible and changed
                 if self.is_visible and new_state != self.current_state:
-                    self.calculate_size(new_state)
-                    self.load_state_image(new_state)
-                    # Resize window
-                    frame = self.window.frame()
-                    frame.size.width = self.width
-                    frame.size.height = self.height
-                    self.window.setFrame_display_(frame, True)
-                    self.image_view.setFrame_(
-                        NSMakeRect(0, 0, self.width, self.height)
-                    )
+                    self.change_state(new_state)
         except Exception:
             pass
 
