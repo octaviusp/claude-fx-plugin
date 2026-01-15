@@ -32,6 +32,16 @@ echo "Cleaned: overlays, sounds, sockets, and PID files"
 | Sounds keep playing after exit | Run this command |
 | PC feels slow from orphaned processes | Run this command |
 
+## If coreaudiod is using high memory
+
+If Activity Monitor shows `coreaudiod` using excessive memory (>500MB), restart it:
+
+```bash
+sudo killall coreaudiod
+```
+
+macOS will auto-restart it with fresh memory. Audio will briefly cut out then resume.
+
 ## After Cleanup
 
 Start a new Claude Code session to get a fresh overlay. The setup check will run automatically.

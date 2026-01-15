@@ -497,16 +497,21 @@ def play_sound(state: str, settings: dict):
     if not sound_path:
         return
 
+    # Kill previous sound to prevent accumulation (protects coreaudiod)
+    for proc in _sound_processes:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    _sound_processes = []
+
     try:
         proc = subprocess.Popen(
             ['afplay', '-v', str(volume), str(sound_path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
-        _sound_processes.append(proc)
-
-        # Clean up finished processes
-        _sound_processes = [p for p in _sound_processes if p.poll() is None]
+        _sound_processes = [proc]  # Only track current sound
     except Exception:
         pass
 
