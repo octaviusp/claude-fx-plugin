@@ -27,12 +27,14 @@ def get_session_paths(window_id: int) -> tuple[Path, Path]:
     )
 
 
-def get_session_window_id() -> int | None:
-    """Get window ID for this session (cached)."""
+def get_session_id() -> int | None:
+    """Get session ID (window_id or terminal PID as fallback)."""
     global _session_window_id
     if _session_window_id is None:
         info = get_terminal_info()
-        _session_window_id = info.get('window_id') if info else None
+        if info:
+            # Prefer window_id, fall back to terminal PID
+            _session_window_id = info.get('window_id') or info.get('pid')
     return _session_window_id
 
 
@@ -197,22 +199,25 @@ def detect_error(data: dict) -> bool:
 
 def write_state(state: str, tool: str = None):
     """Write state to session-specific state file."""
-    window_id = get_session_window_id()
-    if not window_id:
+    session_id = get_session_id()
+    if not session_id:
         return  # Can't determine session
-    state_file, _ = get_session_paths(window_id)
+    state_file, _ = get_session_paths(session_id)
     FX_DIR.mkdir(parents=True, exist_ok=True)
+    # Include terminal info for visibility tracking
+    info = get_terminal_info() or {}
     state_file.write_text(json.dumps({
         'state': state,
         'tool': tool,
-        'terminal_window_id': window_id,
+        'terminal_pid': info.get('pid'),
+        'terminal_window_id': info.get('window_id'),
         'timestamp': int(__import__('time').time() * 1000)
     }))
 
 
 def is_overlay_running() -> bool:
     """Check if session-specific overlay process is running."""
-    window_id = get_session_window_id()
+    window_id = get_session_id()
     if not window_id:
         return False
     _, pid_file = get_session_paths(window_id)
@@ -228,7 +233,7 @@ def is_overlay_running() -> bool:
 
 def stop_overlay():
     """Stop the session-specific overlay process and clean up files."""
-    window_id = get_session_window_id()
+    window_id = get_session_id()
     if not window_id:
         return
     state_file, pid_file = get_session_paths(window_id)
@@ -245,7 +250,7 @@ def stop_overlay():
 
 def start_overlay():
     """Start session-specific overlay process in background."""
-    window_id = get_session_window_id()
+    window_id = get_session_id()
     if not window_id:
         return
     overlay_script = PLUGIN_ROOT / 'scripts' / 'overlay.py'

@@ -240,9 +240,9 @@ class Overlay:
         self.pending_idle_timer = None
         self.load_state_image('idle', crossfade=False)
 
-        # Visibility tracking - use session ID if available
+        # Visibility tracking - read from state file on first poll
         self.terminal_pid = None
-        self.terminal_window_id = int(SESSION_ID) if SESSION_ID else None
+        self.terminal_window_id = None
         self.is_visible = True
         self.last_terminal_pos = None
         self.show_only_when_active = overlay_cfg.get(
@@ -455,11 +455,10 @@ class Overlay:
                 data = json.loads(STATE_FILE.read_text())
                 new_state = data.get('state', 'idle')
 
-                # Get terminal PID from window ID (only once, on first poll)
-                if self.terminal_pid is None and self.terminal_window_id:
-                    self.terminal_pid = self.get_pid_from_window_id(
-                        self.terminal_window_id
-                    )
+                # Get terminal info from state file (only once, on first poll)
+                if self.terminal_pid is None:
+                    self.terminal_pid = data.get('terminal_pid')
+                    self.terminal_window_id = data.get('terminal_window_id')
 
                 # Check visibility if tracking is enabled
                 if self.show_only_when_active:
