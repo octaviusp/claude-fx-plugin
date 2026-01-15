@@ -34,13 +34,14 @@ def get_lock_file(window_id: int) -> Path:
 
 
 def get_session_id() -> int | None:
-    """Get session ID (window_id or terminal PID as fallback)."""
+    """Get session ID (terminal PID only - for singleton lock)."""
     global _session_window_id
     if _session_window_id is None:
         info = get_terminal_info()
         if info:
-            # Prefer window_id, fall back to terminal PID
-            _session_window_id = info.get('window_id') or info.get('pid')
+            # ALWAYS use PID for session ID (lock file)
+            # Window ID is only for visibility tracking
+            _session_window_id = info.get('pid')
     return _session_window_id
 
 
@@ -87,9 +88,8 @@ def get_terminal_info() -> dict | None:
     if not terminal_pid:
         return None
 
-    # Now find the window for this terminal
-    # Check if terminal is still frontmost to avoid race condition
-    # If user switched away, we can't reliably detect the correct window
+    # Get window ID by enumerating terminal's windows (even if not frontmost)
+    window_id = None
     try:
         from AppKit import NSWorkspace
         from Quartz import (
@@ -98,32 +98,33 @@ def get_terminal_info() -> dict | None:
             kCGNullWindowID,
         )
 
-        # Check if our terminal is currently frontmost
-        frontmost = NSWorkspace.sharedWorkspace().frontmostApplication()
-        if frontmost.processIdentifier() != terminal_pid:
-            # User switched away - fall back to PID-only tracking
-            # This means overlay shows for any window of this terminal app
-            _terminal_info = {'pid': terminal_pid, 'window_id': None}
-            return _terminal_info
-
-        # Terminal is frontmost, we can trust the window detection
         windows = CGWindowListCopyWindowInfo(
             kCGWindowListOptionOnScreenOnly, kCGNullWindowID
         )
+
+        # Find windows belonging to our terminal PID (layer 0 = normal windows)
+        terminal_windows = []
         for w in windows:
             if w.get('kCGWindowOwnerPID') == terminal_pid:
-                window_id = w.get('kCGWindowNumber')
-                if window_id:
-                    _terminal_info = {
-                        'pid': terminal_pid,
-                        'window_id': window_id
-                    }
-                    return _terminal_info
+                layer = w.get('kCGWindowLayer', 0)
+                if layer == 0:
+                    terminal_windows.append(w.get('kCGWindowNumber'))
+
+        if len(terminal_windows) == 1:
+            # Only one window - use it
+            window_id = terminal_windows[0]
+        elif len(terminal_windows) > 1:
+            # Multiple windows - check if one is frontmost
+            frontmost = NSWorkspace.sharedWorkspace().frontmostApplication()
+            if frontmost.processIdentifier() == terminal_pid:
+                # Terminal is frontmost, first layer-0 window is active
+                window_id = terminal_windows[0]
+            # If not frontmost, can't reliably pick the right window
+            # Leave window_id as None - overlay will detect it later
     except Exception:
         pass
 
-    # Fallback: just PID, no window ID
-    _terminal_info = {'pid': terminal_pid, 'window_id': None}
+    _terminal_info = {'pid': terminal_pid, 'window_id': window_id}
     return _terminal_info
 
 

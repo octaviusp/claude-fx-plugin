@@ -174,8 +174,11 @@ def is_our_window_frontmost(terminal_pid: int, window_id: int) -> bool:
             w_id = w.get('kCGWindowNumber')
 
             if window_id:
+                # STRICT: Must match both PID AND window_id
                 return w_pid == terminal_pid and w_id == window_id
             else:
+                # No window_id yet - allow if terminal is frontmost
+                # (overlay will acquire window_id lazily)
                 return w_pid == terminal_pid
 
         return False
@@ -566,6 +569,29 @@ class Overlay:
                 if self.terminal_pid is None:
                     self.terminal_pid = data.get('terminal_pid')
                     self.terminal_window_id = data.get('terminal_window_id')
+
+                # Lazy window_id detection: acquire when terminal is frontmost
+                if self.terminal_pid and not self.terminal_window_id:
+                    try:
+                        ws = NSWorkspace.sharedWorkspace()
+                        front = ws.frontmostApplication()
+                        if front.processIdentifier() == self.terminal_pid:
+                            opts = (kCGWindowListOptionOnScreenOnly |
+                                    kCGWindowListExcludeDesktopElements)
+                            wins = CGWindowListCopyWindowInfo(
+                                opts, kCGNullWindowID
+                            )
+                            for w in wins:
+                                if w.get('kCGWindowLayer', 0) != 0:
+                                    continue
+                                w_pid = w.get('kCGWindowOwnerPID')
+                                if w_pid == self.terminal_pid:
+                                    self.terminal_window_id = w.get(
+                                        'kCGWindowNumber'
+                                    )
+                                    break
+                    except Exception:
+                        pass
 
                 # Visibility is now event-driven via appDidActivate_
                 # Only do initial check during startup grace period
