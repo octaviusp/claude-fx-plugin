@@ -11,10 +11,12 @@ from pathlib import Path
 
 try:
     import objc
+    from AppKit import NSWorkspace
     from Cocoa import (
         NSApplication, NSWindow, NSView, NSImage, NSColor, NSTimer,
         NSMakeRect, NSBackingStoreBuffered, NSFloatingWindowLevel,
         NSCompositingOperationSourceOver, NSScreen,
+        NSAnimationContext,
     )
     from Quartz import (
         CGWindowListCopyWindowInfo,
@@ -73,6 +75,33 @@ def get_terminal_position():
     except Exception:
         pass
     return {'x': 100, 'y': 100, 'w': 800, 'h': 600}
+
+
+def is_terminal_window_visible(terminal_pid: int, window_id: int) -> bool:
+    """Check if our specific terminal window is visible and frontmost."""
+    if not terminal_pid:
+        return True  # Fallback: always show if no PID tracked
+
+    try:
+        # First check if terminal app is frontmost
+        frontmost = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if frontmost.processIdentifier() != terminal_pid:
+            return False  # Different app is active
+
+        # If we have a window ID, check if it's the topmost terminal window
+        if window_id:
+            windows = CGWindowListCopyWindowInfo(
+                kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+            )
+            # Find first window belonging to our terminal (topmost)
+            for w in windows:
+                if w.get('kCGWindowOwnerPID') == terminal_pid:
+                    # First terminal window we find is the frontmost one
+                    return w.get('kCGWindowNumber') == window_id
+
+        return True  # Fallback if no window ID
+    except Exception:
+        return True
 
 
 class ImageView(NSView):
@@ -151,6 +180,15 @@ class Overlay:
         # State tracking
         self.current_state = 'idle'
         self.load_state_image('idle')
+
+        # Visibility tracking
+        self.terminal_pid = None
+        self.terminal_window_id = None
+        self.is_visible = True
+        self.show_only_when_active = overlay_cfg.get(
+            'showOnlyWhenTerminalActive', True
+        )
+        self.fade_animation = overlay_cfg.get('fadeAnimation', True)
 
         # Show window
         self.window.makeKeyAndOrderFront_(None)
@@ -235,7 +273,24 @@ class Overlay:
             if STATE_FILE.exists():
                 data = json.loads(STATE_FILE.read_text())
                 new_state = data.get('state', 'idle')
-                if new_state != self.current_state:
+
+                # Get terminal info (only once, on first poll)
+                if self.terminal_pid is None:
+                    self.terminal_pid = data.get('terminal_pid')
+                    self.terminal_window_id = data.get('terminal_window_id')
+
+                # Check visibility if tracking is enabled
+                if self.show_only_when_active:
+                    should_show = is_terminal_window_visible(
+                        self.terminal_pid, self.terminal_window_id
+                    )
+                    if should_show and not self.is_visible:
+                        self.fadeIn()
+                    elif not should_show and self.is_visible:
+                        self.fadeOut()
+
+                # Update state if visible and changed
+                if self.is_visible and new_state != self.current_state:
                     self.calculate_size(new_state)
                     self.load_state_image(new_state)
                     # Resize window
@@ -253,6 +308,46 @@ class Overlay:
         """Write PID file."""
         FX_DIR.mkdir(parents=True, exist_ok=True)
         PID_FILE.write_text(str(os.getpid()))
+
+    def fadeIn(self):
+        """Smoothly show the overlay."""
+        if self.is_visible:
+            return
+        self.window.setAlphaValue_(0.0)
+        self.window.orderFront_(None)
+        if self.fade_animation:
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.currentContext().setDuration_(0.3)
+            self.window.animator().setAlphaValue_(1.0)
+            NSAnimationContext.endGrouping()
+        else:
+            self.window.setAlphaValue_(1.0)
+        self.is_visible = True
+
+    def fadeOut(self):
+        """Smoothly hide the overlay."""
+        if not self.is_visible:
+            return
+        if self.fade_animation:
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.currentContext().setDuration_(0.3)
+            self.window.animator().setAlphaValue_(0.0)
+            NSAnimationContext.endGrouping()
+            # Schedule orderOut after animation
+            timer_method = 'scheduledTimerWithTimeInterval_' \
+                'target_selector_userInfo_repeats_'
+            getattr(NSTimer, timer_method)(
+                0.3, self, 'hideWindow:', None, False
+            )
+        else:
+            self.window.setAlphaValue_(0.0)
+            self.window.orderOut_(None)
+        self.is_visible = False
+
+    def hideWindow_(self, timer):
+        """Called after fade out animation to hide window."""
+        if not self.is_visible:
+            self.window.orderOut_(None)
 
     def run(self):
         """Start the overlay."""

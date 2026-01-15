@@ -10,6 +10,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Terminal PID cache (set once per session)
+_terminal_pid = None
+
 # Paths
 HOME = Path.home()
 FX_DIR = HOME / '.claude-fx'
@@ -21,6 +24,71 @@ PLUGIN_ROOT = Path(os.environ.get(
     'CLAUDE_PLUGIN_ROOT',
     Path(__file__).parent.parent
 ))
+
+TERMINAL_NAMES = {
+    'Terminal', 'iTerm2', 'Alacritty', 'kitty', 'Warp', 'WezTerm'
+}
+
+# Cache for terminal info
+_terminal_info = None
+
+
+def get_terminal_info() -> dict | None:
+    """Get terminal PID and window ID for the terminal running Claude Code."""
+    global _terminal_info
+    if _terminal_info is not None:
+        return _terminal_info
+
+    # First, find terminal PID by walking process tree
+    terminal_pid = None
+    pid = os.getpid()
+    while pid > 1:
+        try:
+            result = subprocess.run(
+                ['ps', '-p', str(pid), '-o', 'ppid=,comm='],
+                capture_output=True, text=True
+            )
+            parts = result.stdout.strip().split(None, 1)
+            if len(parts) >= 2:
+                ppid, comm = int(parts[0]), parts[1]
+                if any(t.lower() in comm.lower() for t in TERMINAL_NAMES):
+                    terminal_pid = pid
+                    break
+                pid = ppid
+            else:
+                break
+        except Exception:
+            break
+
+    if not terminal_pid:
+        return None
+
+    # Now find the frontmost window for this terminal (the active one)
+    try:
+        from Quartz import (
+            CGWindowListCopyWindowInfo,
+            kCGWindowListOptionOnScreenOnly,
+            kCGNullWindowID,
+        )
+        windows = CGWindowListCopyWindowInfo(
+            kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+        )
+        # Find windows belonging to our terminal, pick the first (topmost)
+        for w in windows:
+            if w.get('kCGWindowOwnerPID') == terminal_pid:
+                window_id = w.get('kCGWindowNumber')
+                if window_id:
+                    _terminal_info = {
+                        'pid': terminal_pid,
+                        'window_id': window_id
+                    }
+                    return _terminal_info
+    except Exception:
+        pass
+
+    # Fallback: just PID, no window ID
+    _terminal_info = {'pid': terminal_pid, 'window_id': None}
+    return _terminal_info
 
 
 def load_settings() -> dict:
@@ -101,9 +169,12 @@ def detect_error(data: dict) -> bool:
 def write_state(state: str, tool: str = None):
     """Write state to state file."""
     FX_DIR.mkdir(parents=True, exist_ok=True)
+    terminal_info = get_terminal_info() or {}
     STATE_FILE.write_text(json.dumps({
         'state': state,
         'tool': tool,
+        'terminal_pid': terminal_info.get('pid'),
+        'terminal_window_id': terminal_info.get('window_id'),
         'timestamp': int(__import__('time').time() * 1000)
     }))
 

@@ -52,13 +52,16 @@ claude-fx-plugin/
 - Reads settings from `settings-fx.json`
 - Polls `~/.claude-fx/state.json` via NSTimer
 - Terminal position detection via Quartz API
+- **Terminal-specific visibility** - only shows when the terminal that started Claude Code is active
+- **Fade animations** - smooth alpha transitions when showing/hiding
 - PID file at `~/.claude-fx/overlay.pid`
 
 ### scripts/hook-handler.py
 - Entry point for all Claude Code hooks
 - Reads JSON from stdin (hook event data)
 - Maps hook events to overlay states
-- Writes state to `~/.claude-fx/state.json`
+- **Detects terminal PID** - walks process tree to find parent terminal
+- Writes state to `~/.claude-fx/state.json` (includes terminal_pid)
 - Auto-starts overlay if not running
 - Plays sounds via `afplay` with configurable volume
 - Runs setup check on SessionStart
@@ -81,7 +84,9 @@ claude-fx-plugin/
     "customX": null,
     "customY": null,
     "offsetX": 20,
-    "offsetY": 40
+    "offsetY": 40,
+    "showOnlyWhenTerminalActive": true,
+    "fadeAnimation": true
   },
   "audio": {
     "enabled": true,
@@ -171,8 +176,10 @@ Requirements:
 
 ## Recent Changes
 
+- **Terminal-specific visibility** - Overlay only shows when the terminal running Claude Code is active
+- **Fade animations** - Smooth transitions when showing/hiding overlay
 - **PyObjC overlay** - True transparency, no window chrome
 - **Setup system** - Auto-detects and helps install dependencies
-- **Configurable settings** - Size, position, volume
+- **Configurable settings** - Size, position, volume, visibility behavior
 - **PNG support** - High-quality transparent images
 - **Waifu mascot** - Custom anime-style character included
