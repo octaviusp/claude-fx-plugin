@@ -192,6 +192,19 @@ def is_overlay_running() -> bool:
     return False
 
 
+def stop_overlay():
+    """Stop the overlay process."""
+    if PID_FILE.exists():
+        try:
+            pid = int(PID_FILE.read_text())
+            os.kill(pid, 15)  # SIGTERM
+            PID_FILE.unlink()
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+        except FileNotFoundError:
+            pass
+
+
 def start_overlay():
     """Start overlay process in background."""
     overlay_script = PLUGIN_ROOT / 'scripts' / 'overlay.py'
@@ -271,6 +284,15 @@ def main():
     is_error = event == 'PostToolUse' and detect_error(data)
     state = map_event_to_state(event, is_error)
     tool = data.get('tool_name')
+
+    # Handle SessionEnd specially - show farewell then kill overlay
+    if event == 'SessionEnd':
+        write_state(state, tool)
+        play_sound('greeting', settings)  # Play greeting sound for goodbye
+        import time
+        time.sleep(3.5)  # Wait for animation
+        stop_overlay()
+        sys.exit(0)
 
     # Write state file
     write_state(state, tool)
