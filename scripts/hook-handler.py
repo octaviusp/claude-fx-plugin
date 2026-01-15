@@ -10,15 +10,31 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Terminal PID cache (set once per session)
-_terminal_pid = None
+# Session window ID cache (set once per hook invocation)
+_session_window_id = None
 
 # Paths
 HOME = Path.home()
 FX_DIR = HOME / '.claude-fx'
-STATE_FILE = FX_DIR / 'state.json'
-PID_FILE = FX_DIR / 'overlay.pid'
 SETUP_OK_FILE = FX_DIR / 'setup_ok'
+
+
+def get_session_paths(window_id: int) -> tuple[Path, Path]:
+    """Get session-specific state and PID file paths."""
+    return (
+        FX_DIR / f'state-{window_id}.json',
+        FX_DIR / f'overlay-{window_id}.pid'
+    )
+
+
+def get_session_window_id() -> int | None:
+    """Get window ID for this session (cached)."""
+    global _session_window_id
+    if _session_window_id is None:
+        info = get_terminal_info()
+        _session_window_id = info.get('window_id') if info else None
+    return _session_window_id
+
 
 PLUGIN_ROOT = Path(os.environ.get(
     'CLAUDE_PLUGIN_ROOT',
@@ -168,49 +184,63 @@ def detect_error(data: dict) -> bool:
 
 
 def write_state(state: str, tool: str = None):
-    """Write state to state file."""
+    """Write state to session-specific state file."""
+    window_id = get_session_window_id()
+    if not window_id:
+        return  # Can't determine session
+    state_file, _ = get_session_paths(window_id)
     FX_DIR.mkdir(parents=True, exist_ok=True)
-    terminal_info = get_terminal_info() or {}
-    STATE_FILE.write_text(json.dumps({
+    state_file.write_text(json.dumps({
         'state': state,
         'tool': tool,
-        'terminal_pid': terminal_info.get('pid'),
-        'terminal_window_id': terminal_info.get('window_id'),
+        'terminal_window_id': window_id,
         'timestamp': int(__import__('time').time() * 1000)
     }))
 
 
 def is_overlay_running() -> bool:
-    """Check if overlay process is running."""
-    if PID_FILE.exists():
+    """Check if session-specific overlay process is running."""
+    window_id = get_session_window_id()
+    if not window_id:
+        return False
+    _, pid_file = get_session_paths(window_id)
+    if pid_file.exists():
         try:
-            pid = int(PID_FILE.read_text())
+            pid = int(pid_file.read_text())
             os.kill(pid, 0)
             return True
         except (ValueError, ProcessLookupError, PermissionError):
-            pass
+            pid_file.unlink(missing_ok=True)
     return False
 
 
 def stop_overlay():
-    """Stop the overlay process."""
-    if PID_FILE.exists():
+    """Stop the session-specific overlay process and clean up files."""
+    window_id = get_session_window_id()
+    if not window_id:
+        return
+    state_file, pid_file = get_session_paths(window_id)
+    if pid_file.exists():
         try:
-            pid = int(PID_FILE.read_text())
+            pid = int(pid_file.read_text())
             os.kill(pid, 15)  # SIGTERM
-            PID_FILE.unlink()
         except (ValueError, ProcessLookupError, PermissionError):
             pass
-        except FileNotFoundError:
-            pass
+        pid_file.unlink(missing_ok=True)
+    # Clean up state file too
+    state_file.unlink(missing_ok=True)
 
 
 def start_overlay():
-    """Start overlay process in background."""
+    """Start session-specific overlay process in background."""
+    window_id = get_session_window_id()
+    if not window_id:
+        return
     overlay_script = PLUGIN_ROOT / 'scripts' / 'overlay.py'
     if overlay_script.exists():
         env = os.environ.copy()
         env['CLAUDE_FX_ROOT'] = str(PLUGIN_ROOT)
+        env['CLAUDE_FX_SESSION'] = str(window_id)  # Pass session ID
         subprocess.Popen(
             [sys.executable, str(overlay_script)],
             env=env,

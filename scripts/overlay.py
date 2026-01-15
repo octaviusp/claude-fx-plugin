@@ -18,6 +18,8 @@ try:
         NSCompositingOperationSourceOver, NSScreen,
         NSAnimationContext,
     )
+    # NSApplicationActivationPolicy constant (not always exported by PyObjC)
+    NSApplicationActivationPolicyProhibited = 2
     from Quartz import (
         CGWindowListCopyWindowInfo,
         kCGWindowListOptionOnScreenOnly,
@@ -30,8 +32,22 @@ except ImportError:
 # Paths
 HOME = Path.home()
 FX_DIR = HOME / '.claude-fx'
-STATE_FILE = FX_DIR / 'state.json'
-PID_FILE = FX_DIR / 'overlay.pid'
+
+# Session ID from environment (set by hook-handler)
+SESSION_ID = os.environ.get('CLAUDE_FX_SESSION')
+
+
+def get_session_paths() -> tuple[Path, Path]:
+    """Get state and PID file paths for this session."""
+    if SESSION_ID:
+        return (
+            FX_DIR / f'state-{SESSION_ID}.json',
+            FX_DIR / f'overlay-{SESSION_ID}.pid'
+        )
+    return (FX_DIR / 'state.json', FX_DIR / 'overlay.pid')
+
+
+STATE_FILE, PID_FILE = get_session_paths()
 
 PLUGIN_ROOT = Path(os.environ.get(
     'CLAUDE_FX_ROOT',
@@ -170,6 +186,8 @@ class Overlay:
 
     def __init__(self):
         self.app = NSApplication.sharedApplication()
+        # Hide from dock - run as background process
+        self.app.setActivationPolicy_(NSApplicationActivationPolicyProhibited)
 
         # Load settings
         self.settings = load_settings()
@@ -222,9 +240,9 @@ class Overlay:
         self.pending_idle_timer = None
         self.load_state_image('idle', crossfade=False)
 
-        # Visibility tracking
+        # Visibility tracking - use session ID if available
         self.terminal_pid = None
-        self.terminal_window_id = None
+        self.terminal_window_id = int(SESSION_ID) if SESSION_ID else None
         self.is_visible = True
         self.last_terminal_pos = None
         self.show_only_when_active = overlay_cfg.get(
@@ -406,6 +424,19 @@ class Overlay:
         self.image_view_front.setFrame_(view_rect)
         self.image_view_back.setFrame_(view_rect)
 
+    def get_pid_from_window_id(self, window_id: int) -> int | None:
+        """Get the owner PID of a window by its ID."""
+        try:
+            windows = CGWindowListCopyWindowInfo(
+                kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+            )
+            for w in windows:
+                if w.get('kCGWindowNumber') == window_id:
+                    return w.get('kCGWindowOwnerPID')
+        except Exception:
+            pass
+        return None
+
     def update_position(self, pos: dict):
         """Update overlay position to follow terminal."""
         screen_height = NSScreen.mainScreen().frame().size.height
@@ -424,10 +455,11 @@ class Overlay:
                 data = json.loads(STATE_FILE.read_text())
                 new_state = data.get('state', 'idle')
 
-                # Get terminal info (only once, on first poll)
-                if self.terminal_pid is None:
-                    self.terminal_pid = data.get('terminal_pid')
-                    self.terminal_window_id = data.get('terminal_window_id')
+                # Get terminal PID from window ID (only once, on first poll)
+                if self.terminal_pid is None and self.terminal_window_id:
+                    self.terminal_pid = self.get_pid_from_window_id(
+                        self.terminal_window_id
+                    )
 
                 # Check visibility if tracking is enabled
                 if self.show_only_when_active:
