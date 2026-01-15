@@ -5,8 +5,10 @@ Displays PNG/GIF mascot with real transparency - no background window.
 """
 
 import json
+import math
 import os
 import sys
+import time
 from pathlib import Path
 
 try:
@@ -24,6 +26,7 @@ try:
         CGWindowListCopyWindowInfo,
         kCGWindowListOptionOnScreenOnly,
         kCGNullWindowID,
+        CGColorCreateGenericRGB,
     )
 except ImportError:
     print("Required: pip3 install pyobjc-framework-Cocoa")
@@ -71,6 +74,17 @@ STATE_DURATIONS = {
     'sleeping': None,
     'farewell': 3.0,  # Shows greeting then exits
 }
+
+# Animation constants - floating effect
+FLOAT_AMPLITUDE = 3.0   # pixels of vertical movement
+FLOAT_PERIOD = 2.5      # seconds for full oscillation cycle
+
+# Animation constants - aura glow effect
+AURA_COLOR = (0.4, 0.55, 1.0, 1.0)  # Soft blue (R, G, B, A)
+AURA_MIN_RADIUS = 8.0
+AURA_MAX_RADIUS = 14.0
+AURA_PERIOD = 1.8       # seconds for pulse cycle
+AURA_OPACITY = 0.5
 
 
 def load_settings() -> dict:
@@ -234,6 +248,14 @@ class Overlay:
         self.content_view.addSubview_(self.image_view_front)
         self.window.setContentView_(self.content_view)
 
+        # Setup aura glow effect (layer-backed for shadow)
+        self.content_view.setWantsLayer_(True)
+        layer = self.content_view.layer()
+        layer.setShadowColor_(CGColorCreateGenericRGB(*AURA_COLOR))
+        layer.setShadowOpacity_(AURA_OPACITY)
+        layer.setShadowRadius_(AURA_MIN_RADIUS)
+        layer.setShadowOffset_((0, 0))  # Centered glow
+
         # State tracking
         self.current_state = 'idle'
         self.last_file_state = None  # Track what we last read from file
@@ -251,7 +273,11 @@ class Overlay:
         self.fade_animation = overlay_cfg.get('fadeAnimation', True)
         # Grace period: don't hide overlay for first 1.5s after startup
         # This prevents hiding due to race conditions at startup
-        self.startup_time = __import__('time').time()
+        self.startup_time = time.time()
+
+        # Animation state
+        self.animation_start = time.time()
+        self.base_y = y  # Base Y position (before float offset)
 
         # Don't show window yet - defer until run loop starts
         self.window.setAlphaValue_(0.0)
@@ -449,6 +475,9 @@ class Overlay:
         x = pos['x'] + pos['w'] - self.width - self.offset_x
         y = screen_height - pos['y'] - self.offset_y - self.height
 
+        # Store base position for floating animation
+        self.base_y = y
+
         frame = self.window.frame()
         frame.origin.x = x
         frame.origin.y = y
@@ -467,7 +496,6 @@ class Overlay:
                     self.terminal_window_id = data.get('terminal_window_id')
 
                 # Check visibility (skip during 1.5s startup grace period)
-                import time
                 in_grace = (time.time() - self.startup_time) < 1.5
                 if self.show_only_when_active and not in_grace:
                     should_show = is_terminal_window_visible(
@@ -492,6 +520,27 @@ class Overlay:
                 if self.is_visible and new_state != self.last_file_state:
                     self.last_file_state = new_state
                     self.change_state(new_state)
+
+            # Run animations (floating + aura) every frame
+            if self.is_visible:
+                elapsed = time.time() - self.animation_start
+
+                # Floating: subtle vertical sine wave
+                float_offset = FLOAT_AMPLITUDE * math.sin(
+                    2 * math.pi * elapsed / FLOAT_PERIOD
+                )
+                frame = self.window.frame()
+                frame.origin.y = self.base_y + float_offset
+                self.window.setFrame_display_(frame, False)
+
+                # Aura: pulsing glow radius
+                aura_wave = 0.5 + 0.5 * math.sin(
+                    2 * math.pi * elapsed / AURA_PERIOD
+                )
+                aura_range = AURA_MAX_RADIUS - AURA_MIN_RADIUS
+                radius = AURA_MIN_RADIUS + aura_range * aura_wave
+                self.content_view.layer().setShadowRadius_(radius)
+
         except Exception:
             pass
 
