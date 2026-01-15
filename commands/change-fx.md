@@ -41,9 +41,14 @@ Edit `settings-fx.json` in the plugin folder:
 
 ```json
 {
-  "overlay": { "maxHeight": 350 },
+  "overlay": {
+    "maxHeight": 350,
+    "bottomGradient": { "enabled": true, "percentage": 0.2 }
+  },
   "audio": { "volume": 0.5, "enabled": true }
 }
 ```
+
+**Bottom Gradient:** Fades the bottom 20% of the image to transparent so you can read text behind it. Adjust `percentage` (0.0-1.0) or set `enabled: false` to disable.
 
 Changes take effect on next Claude Code session.

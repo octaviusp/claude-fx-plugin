@@ -5,6 +5,7 @@ Displays PNG/GIF mascot with real transparency - no background window.
 """
 
 import atexit
+import io
 import json
 import math
 import os
@@ -15,6 +16,8 @@ import threading
 import time
 from pathlib import Path
 
+from PIL import Image
+
 try:
     import objc
     from AppKit import NSWorkspace
@@ -24,7 +27,7 @@ try:
         NSCompositingOperationSourceOver, NSScreen,
         NSAnimationContext,
     )
-    from Foundation import NSObject
+    from Foundation import NSData, NSObject
     # NSApplicationActivationPolicy constant (not always exported by PyObjC)
     NSApplicationActivationPolicyProhibited = 2
     from Quartz import (
@@ -98,6 +101,50 @@ def load_settings() -> dict:
         except Exception:
             pass
     return {}
+
+
+def apply_bottom_gradient(pil_image: Image.Image, percentage: float):
+    """Apply alpha gradient to bottom portion of image.
+
+    Args:
+        pil_image: PIL Image (will be converted to RGBA if needed)
+        percentage: Fraction of image height to fade (0.0-1.0)
+
+    Returns:
+        Modified PIL Image with gradient alpha at bottom
+    """
+    if percentage <= 0:
+        return pil_image
+
+    if pil_image.mode != 'RGBA':
+        pil_image = pil_image.convert('RGBA')
+
+    width, height = pil_image.size
+    gradient_height = int(height * min(percentage, 1.0))
+
+    if gradient_height <= 0:
+        return pil_image
+
+    pixels = pil_image.load()
+    start_y = height - gradient_height
+
+    for y in range(start_y, height):
+        progress = (y - start_y) / gradient_height
+        alpha_mult = 1.0 - progress
+        for x in range(width):
+            r, g, b, a = pixels[x, y]
+            pixels[x, y] = (r, g, b, int(a * alpha_mult))
+
+    return pil_image
+
+
+def pil_to_nsimage(pil_image: Image.Image) -> NSImage:
+    """Convert PIL Image to NSImage."""
+    buffer = io.BytesIO()
+    pil_image.save(buffer, format='PNG')
+    png_data = buffer.getvalue()
+    data = NSData.dataWithBytes_length_(png_data, len(png_data))
+    return NSImage.alloc().initWithData_(data)
 
 
 def get_terminal_position():
@@ -242,6 +289,11 @@ class Overlay(NSObject):
         self.height_ratio = overlay_cfg.get(
             'heightRatio', DEFAULT_HEIGHT_RATIO
         )
+
+        # Bottom gradient settings
+        gradient_cfg = overlay_cfg.get('bottomGradient', {})
+        self.gradient_enabled = gradient_cfg.get('enabled', True)
+        self.gradient_percentage = gradient_cfg.get('percentage', 0.2)
 
         # Load manifest
         theme_name = self.settings.get('theme', 'default')
@@ -596,7 +648,7 @@ class Overlay(NSObject):
                         self.height = int(size.height)
 
     def load_state_image(self, state: str, crossfade: bool = True):
-        """Load image for a given state."""
+        """Load image for a given state with optional bottom gradient."""
         self.current_state = state
 
         states = self.manifest.get('states', {})
@@ -608,10 +660,26 @@ class Overlay(NSObject):
         if animation:
             img_path = self.theme_path / animation
             if img_path.exists():
-                img = NSImage.alloc().initWithContentsOfFile_(str(img_path))
+                if self.gradient_enabled and self.gradient_percentage > 0:
+                    # PIL path: load, resize, apply gradient, convert
+                    pil_img = Image.open(str(img_path))
+                    pil_img = pil_img.resize(
+                        (self.width, self.height),
+                        Image.Resampling.LANCZOS
+                    )
+                    pil_img = apply_bottom_gradient(
+                        pil_img, self.gradient_percentage
+                    )
+                    img = pil_to_nsimage(pil_img)
+                else:
+                    # Direct NSImage path (no gradient)
+                    img = NSImage.alloc().initWithContentsOfFile_(
+                        str(img_path)
+                    )
+                    if img:
+                        img.setSize_((self.width, self.height))
+
                 if img:
-                    # Scale image
-                    img.setSize_((self.width, self.height))
                     if crossfade and self.fade_animation:
                         self.crossfade_to_image(img)
                     else:

@@ -10,7 +10,11 @@
     "offsetX": 20,
     "offsetY": 0,
     "showOnlyWhenTerminalActive": true,
-    "fadeAnimation": true
+    "fadeAnimation": true,
+    "bottomGradient": {
+      "enabled": true,
+      "percentage": 0.8
+    }
   },
   "audio": {
     "enabled": true,
