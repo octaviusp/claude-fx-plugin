@@ -177,6 +177,8 @@ farewell.aiff    # Session end
 
 **Supported formats:** `.wav`, `.mp3`, `.aiff`, `.m4a`, `.caf`, `.aac`
 
+Sound playback uses native **NSSound** API (in-process, no subprocess spawning).
+
 ## Commands
 
 | Command | Description |
@@ -247,8 +249,8 @@ claude-fx-plugin/
 ├── hooks/
 │   └── hooks.json        # Hook event mappings
 ├── scripts/
-│   ├── hook-handler.py   # Processes hooks, plays sounds
-│   ├── overlay.py        # PyObjC transparent overlay
+│   ├── hook-handler.py   # Processes hooks, sends commands via socket
+│   ├── overlay.py        # PyObjC overlay + NSSound audio
 │   └── setup.py          # Dependency checker
 ├── themes/default/
 │   ├── characters/       # PNG images per state
@@ -267,6 +269,11 @@ claude-fx-plugin/
 | macOS | Full support |
 | Linux | Not supported (coming soon) |
 | Windows | Not supported |
+
+## What's New in v2.1
+
+- **Sound System Rewrite** - NSSound replaces afplay, eliminating coreaudiod memory bloat
+- **In-Process Audio** - Sound plays within overlay process, no subprocess spawning
 
 ## What's New in v2.0
 

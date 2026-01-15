@@ -39,8 +39,8 @@ claude-fx-plugin/
 ├── hooks/
 │   └── hooks.json            # Hook → handler mappings
 ├── scripts/
-│   ├── hook-handler.py       # Receives hooks, sends state via socket, plays sounds
-│   ├── overlay.py            # PyObjC transparent overlay + socket server (macOS)
+│   ├── hook-handler.py       # Receives hooks, sends state + sound commands via socket
+│   ├── overlay.py            # PyObjC overlay + socket server + NSSound audio (macOS)
 │   └── setup.py              # Dependency checker and installer
 ├── commands/
 │   ├── setup.md              # /claude-fx:setup slash command
@@ -65,6 +65,7 @@ claude-fx-plugin/
 - Click-through enabled (`setIgnoresMouseEvents_`)
 - Reads settings from `settings-fx.json`
 - **Unix socket server** - receives state updates via `~/.claude-fx/sock-{SHELL_PID}.sock`
+- **NSSound audio playback** - in-process sound (no subprocess, prevents coreaudiod bloat)
 - Terminal position detection via Quartz API
 - **Terminal-specific visibility** - only shows when the terminal that started Claude Code is active
 - **Fade animations** - smooth alpha transitions when showing/hiding
@@ -81,9 +82,8 @@ claude-fx-plugin/
 - Reads JSON from stdin (hook event data)
 - Maps hook events to overlay states
 - **Detects shell PID** - walks process tree to find shell (unique per terminal window)
-- **Socket client** - sends state via Unix socket (zero file I/O)
+- **Socket client** - sends state + sound commands via Unix socket (zero file I/O)
 - Auto-starts overlay if not running
-- Plays sounds via `afplay` with configurable volume
 - Runs setup check on SessionStart
 - Cleans up legacy files on SessionStart
 - Always exits 0 (never blocks Claude)
@@ -353,7 +353,12 @@ Sound files in `themes/default/sounds/` named to match states:
 
 **Supported formats:** `.wav`, `.mp3`, `.aiff`, `.m4a`, `.caf`, `.aac`
 
-Sound playback uses macOS native `afplay` command. Volume controlled via `audio.volume` setting (0.0-1.0).
+**Architecture**: Sound playback uses **NSSound** (native Cocoa API) running in-process within overlay.py. This eliminates subprocess spawning that previously caused `coreaudiod` memory bloat.
+
+- hook-handler.py sends `PLAY_SOUND` command via socket
+- overlay.py receives command, stops previous sound, plays new one
+- Single NSSound instance - no process accumulation
+- Volume controlled via `audio.volume` setting (0.0-1.0)
 
 Sound discovery priority:
 1. Path specified in `manifest.json` (e.g., `"sound": "sounds/greeting.aiff"`)
@@ -375,7 +380,15 @@ Sound discovery priority:
 | Linux | Not supported | Would need GTK/Qt port |
 | Windows | Not supported | - |
 
-## Recent Changes (v2.0.0)
+## Recent Changes (v2.1.0)
+
+### Sound System Rewrite
+- **NSSound replaces afplay** - Sound now plays in-process via native Cocoa API
+- **Fixes coreaudiod bloat** - No more subprocess accumulation (was causing 900MB+ memory usage)
+- **Socket-based sound commands** - hook-handler sends PLAY_SOUND, overlay handles playback
+- **Automatic sound stopping** - Previous sound stops before new one plays
+
+## Previous Changes (v2.0.0)
 
 ### Immersion System
 - **Breathing animation** - Subtle Y-axis scale pulse (0.8% intensity, 3.5s cycle)
