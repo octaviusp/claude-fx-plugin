@@ -23,6 +23,17 @@ PLUGIN_ROOT = Path(os.environ.get(
 ))
 
 
+def load_settings() -> dict:
+    """Load settings from settings-fx.json."""
+    settings_file = PLUGIN_ROOT / 'settings-fx.json'
+    if settings_file.exists():
+        try:
+            return json.loads(settings_file.read_text())
+        except Exception:
+            pass
+    return {}
+
+
 def read_stdin() -> dict:
     """Read JSON from stdin."""
     try:
@@ -124,8 +135,16 @@ def start_overlay():
         )
 
 
-def play_sound(state: str):
+def play_sound(state: str, settings: dict):
     """Play sound for state (macOS)."""
+    # Check if audio is enabled
+    audio_cfg = settings.get('audio', {})
+    if not audio_cfg.get('enabled', True):
+        return
+
+    volume = audio_cfg.get('volume', 0.5)
+    theme = settings.get('theme', 'default')
+
     sounds = {
         'greeting': 'greeting.wav',
         'working': 'working.wav',
@@ -137,11 +156,11 @@ def play_sound(state: str):
     if not sound_file:
         return
 
-    sound_path = PLUGIN_ROOT / 'themes' / 'default' / 'sounds' / sound_file
+    sound_path = PLUGIN_ROOT / 'themes' / theme / 'sounds' / sound_file
     if sound_path.exists():
         try:
             subprocess.Popen(
-                ['afplay', '-v', '0.5', str(sound_path)],
+                ['afplay', '-v', str(volume), str(sound_path)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
@@ -169,6 +188,13 @@ def main():
     if not SETUP_OK_FILE.exists():
         sys.exit(0)
 
+    # Load settings
+    settings = load_settings()
+
+    # Check if overlay is enabled
+    overlay_cfg = settings.get('overlay', {})
+    overlay_enabled = overlay_cfg.get('enabled', True)
+
     # Determine state
     is_error = event == 'PostToolUse' and detect_error(data)
     state = map_event_to_state(event, is_error)
@@ -177,12 +203,12 @@ def main():
     # Write state file
     write_state(state, tool)
 
-    # Start overlay if not running
-    if not is_overlay_running():
+    # Start overlay if not running and enabled
+    if overlay_enabled and not is_overlay_running():
         start_overlay()
 
     # Play sound
-    play_sound(state)
+    play_sound(state, settings)
 
     # Always exit 0 to not block Claude
     sys.exit(0)

@@ -36,7 +36,21 @@ PLUGIN_ROOT = Path(os.environ.get(
     Path(__file__).parent.parent
 ))
 
-MAX_HEIGHT = 350
+# Default settings
+DEFAULT_MAX_HEIGHT = 350
+DEFAULT_OFFSET_X = 20
+DEFAULT_OFFSET_Y = 40
+
+
+def load_settings() -> dict:
+    """Load settings from settings-fx.json."""
+    settings_file = PLUGIN_ROOT / 'settings-fx.json'
+    if settings_file.exists():
+        try:
+            return json.loads(settings_file.read_text())
+        except Exception:
+            pass
+    return {}
 
 
 def get_terminal_position():
@@ -93,21 +107,25 @@ class Overlay:
     def __init__(self):
         self.app = NSApplication.sharedApplication()
 
+        # Load settings
+        self.settings = load_settings()
+        overlay_cfg = self.settings.get('overlay', {})
+        self.max_height = overlay_cfg.get('maxHeight', DEFAULT_MAX_HEIGHT)
+        self.offset_x = overlay_cfg.get('offsetX', DEFAULT_OFFSET_X)
+        self.offset_y = overlay_cfg.get('offsetY', DEFAULT_OFFSET_Y)
+
         # Load manifest
-        self.theme_path = PLUGIN_ROOT / 'themes' / 'default'
+        theme_name = self.settings.get('theme', 'default')
+        self.theme_path = PLUGIN_ROOT / 'themes' / theme_name
         self.manifest = self.load_manifest()
 
         # Calculate size from first image
         self.width = 200
-        self.height = MAX_HEIGHT
+        self.height = self.max_height
         self.calculate_size('idle')
 
-        # Get terminal position
-        pos = get_terminal_position()
-        x = pos['x'] + pos['w'] - self.width - 20
-        # macOS y is from bottom, convert from top
-        screen_height = NSScreen.mainScreen().frame().size.height
-        y = screen_height - pos['y'] - 40 - self.height
+        # Calculate position
+        x, y = self.calculate_position(overlay_cfg)
 
         # Create borderless transparent window
         rect = NSMakeRect(x, y, self.width, self.height)
@@ -154,6 +172,26 @@ class Overlay:
                 pass
         return {}
 
+    def calculate_position(self, overlay_cfg: dict) -> tuple:
+        """Calculate window position based on settings."""
+        screen_height = NSScreen.mainScreen().frame().size.height
+
+        # Check for custom position
+        custom_x = overlay_cfg.get('customX')
+        custom_y = overlay_cfg.get('customY')
+
+        if custom_x is not None and custom_y is not None:
+            # Use custom position (convert Y from top to bottom)
+            x = custom_x
+            y = screen_height - custom_y - self.height
+        else:
+            # Auto-detect terminal position
+            pos = get_terminal_position()
+            x = pos['x'] + pos['w'] - self.width - self.offset_x
+            y = screen_height - pos['y'] - self.offset_y - self.height
+
+        return x, y
+
     def calculate_size(self, state: str):
         """Calculate image size maintaining aspect ratio."""
         states = self.manifest.get('states', {})
@@ -166,10 +204,10 @@ class Overlay:
                 img = NSImage.alloc().initWithContentsOfFile_(str(img_path))
                 if img:
                     size = img.size()
-                    if size.height > MAX_HEIGHT:
-                        ratio = MAX_HEIGHT / size.height
+                    if size.height > self.max_height:
+                        ratio = self.max_height / size.height
                         self.width = int(size.width * ratio)
-                        self.height = MAX_HEIGHT
+                        self.height = self.max_height
                     else:
                         self.width = int(size.width)
                         self.height = int(size.height)

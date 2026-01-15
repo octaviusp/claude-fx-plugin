@@ -1,8 +1,10 @@
 {
   "overlay": {
     "enabled": true,
-    "size": 150,
-    "position": "terminal-right",
+    "maxHeight": 350,
+    "position": "auto",
+    "customX": null,
+    "customY": null,
     "offsetX": 20,
     "offsetY": 40
   },
@@ -10,11 +12,5 @@
     "enabled": true,
     "volume": 0.5
   },
-  "theme": "default",
-  "states": {
-    "greeting": { "duration": 3.0 },
-    "success": { "duration": 2.0 },
-    "error": { "duration": 3.0 },
-    "celebrating": { "duration": 3.0 }
-  }
+  "theme": "default"
 }
