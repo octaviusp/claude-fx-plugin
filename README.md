@@ -2,6 +2,8 @@
 
 Animated mascot companion for Claude Code. A transparent overlay that floats beside your terminal and reacts to Claude's activity in real-time.
 
+<!-- To add the demo video: Edit this README on GitHub, drag assets/demo.mov into the editor, and replace this comment with the generated URL -->
+
 ![Mascot](themes/default/characters/greeting.png)
 
 ## Installation
