@@ -405,7 +405,8 @@ class ImageView(NSView):
         self.image = image
         self.setNeedsDisplay_(True)
 
-    def setTransform_(self, rotation, scale_x, scale_y, offset_x, offset_y):
+    @objc.python_method
+    def updateTransform(self, rotation, scale_x, scale_y, offset_x, offset_y):
         """Set transform parameters for breathing/sway effects."""
         self.rotation = rotation
         self.scale_x = scale_x
@@ -1620,7 +1621,7 @@ class Overlay(NSObject):
                         self.transition_active = False
 
                 # Apply transforms to image view
-                self.image_view_front.setTransform_(
+                self.image_view_front.updateTransform(
                     rotation, scale_x, scale_y, offset_x, offset_y
                 )
 
