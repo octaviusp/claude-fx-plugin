@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Claude FX Hook Handler - Receives hook events and updates overlay state.
+Includes setup checking on SessionStart.
 """
 
 import json
@@ -14,6 +15,7 @@ HOME = Path.home()
 FX_DIR = HOME / '.claude-fx'
 STATE_FILE = FX_DIR / 'state.json'
 PID_FILE = FX_DIR / 'overlay.pid'
+SETUP_OK_FILE = FX_DIR / 'setup_ok'
 
 PLUGIN_ROOT = Path(os.environ.get(
     'CLAUDE_PLUGIN_ROOT',
@@ -28,6 +30,35 @@ def read_stdin() -> dict:
         return json.loads(data) if data.strip() else {}
     except Exception:
         return {}
+
+
+def check_setup() -> bool:
+    """
+    Check if setup is complete.
+    Returns True if all requirements are met.
+    """
+    # Quick check - if setup_ok file exists, we're good
+    if SETUP_OK_FILE.exists():
+        return True
+
+    # Run full setup check
+    setup_script = PLUGIN_ROOT / 'scripts' / 'setup.py'
+    if not setup_script.exists():
+        return True  # No setup script, assume OK
+
+    try:
+        # Import and run setup check
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("setup", setup_script)
+        setup_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(setup_module)
+
+        # Run check (quiet mode, no auto-install)
+        return setup_module.main(force_check=True, quiet=False)
+    except Exception as e:
+        # If setup check fails, print error but don't block
+        print(f"Setup check error: {e}", file=sys.stderr)
+        return False
 
 
 def map_event_to_state(event: str, is_error: bool = False) -> str:
@@ -109,7 +140,6 @@ def play_sound(state: str):
     sound_path = PLUGIN_ROOT / 'themes' / 'default' / 'sounds' / sound_file
     if sound_path.exists():
         try:
-            # macOS
             subprocess.Popen(
                 ['afplay', '-v', '0.5', str(sound_path)],
                 stdout=subprocess.DEVNULL,
@@ -120,11 +150,23 @@ def play_sound(state: str):
 
 
 def main():
+    """Main entry point."""
     # Read hook event
     data = read_stdin()
     event = data.get('hook_event_name', '')
 
     if not event:
+        sys.exit(0)
+
+    # On SessionStart, check setup first
+    if event == 'SessionStart':
+        if not check_setup():
+            # Setup incomplete - message already shown by setup.py
+            # Don't start overlay, just exit
+            sys.exit(0)
+
+    # Skip overlay actions if setup not complete
+    if not SETUP_OK_FILE.exists():
         sys.exit(0)
 
     # Determine state
