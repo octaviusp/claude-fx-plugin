@@ -253,12 +253,15 @@ class Overlay:
         # This prevents hiding due to race conditions at startup
         self.startup_time = __import__('time').time()
 
-        # Show window
-        self.window.makeKeyAndOrderFront_(None)
+        # Don't show window yet - defer until run loop starts
+        self.window.setAlphaValue_(0.0)
 
         # Start polling timer (every 0.016 seconds = 60fps for smooth movement)
         m = 'scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_'
         self.timer = getattr(NSTimer, m)(0.016, self, 'pollState:', None, True)
+
+        # Defer window show to after run loop starts (fixes startup visibility)
+        getattr(NSTimer, m)(0.1, self, 'showWindowDeferred:', None, False)
 
         # Write PID
         self.write_pid()
@@ -496,6 +499,11 @@ class Overlay:
         """Write PID file."""
         FX_DIR.mkdir(parents=True, exist_ok=True)
         PID_FILE.write_text(str(os.getpid()))
+
+    def showWindowDeferred_(self, timer):
+        """Show window after run loop has started."""
+        self.window.setAlphaValue_(1.0)
+        self.window.orderFront_(None)
 
     def fadeIn(self):
         """Smoothly show the overlay."""
