@@ -157,6 +157,19 @@ EMOTION_OVERLAYS = {
 # Supported audio formats (NSSound)
 AUDIO_EXTENSIONS = ('.wav', '.mp3', '.m4a', '.aiff', '.aif', '.caf', '.aac')
 
+# Performance: Window position cache TTL (seconds)
+WINDOW_POSITION_CACHE_TTL = 0.5  # Only query Quartz every 500ms
+
+# Socket/timing constants
+ANIMATION_FPS = 60
+ANIMATION_FRAME_TIME = 1.0 / ANIMATION_FPS  # ~0.016s
+SOCKET_TIMEOUT = 0.1
+PARENT_CHECK_INTERVAL = 2.0
+VISIBILITY_CHECK_INTERVAL = 0.5
+STARTUP_GRACE_PERIOD = 1.5
+CROSSFADE_DURATION = 0.2
+FADE_DURATION = 0.3
+
 
 # Speech bubble message pools
 DEFAULT_MESSAGES = {
@@ -418,6 +431,29 @@ def get_terminal_window_position(window_id: int) -> Optional[dict]:
     except Exception:
         pass
     return None
+
+
+# Window position cache (module-level for performance)
+_window_pos_cache: dict = {}
+_window_pos_cache_time: float = 0.0
+
+
+def get_terminal_window_position_cached(window_id: int) -> Optional[dict]:
+    """Get terminal window position with caching (avoids Quartz spam)."""
+    global _window_pos_cache, _window_pos_cache_time
+
+    if not window_id:
+        return None
+
+    now = time.perf_counter()
+    if (now - _window_pos_cache_time) < WINDOW_POSITION_CACHE_TTL:
+        return _window_pos_cache.get(window_id)
+
+    # Cache miss - query Quartz
+    pos = get_terminal_window_position(window_id)
+    _window_pos_cache[window_id] = pos
+    _window_pos_cache_time = now
+    return pos
 
 
 class ImageView(NSView):
@@ -832,6 +868,9 @@ class Overlay(NSObject):
         # Character folder override (session-specific, not persisted)
         self.character_folder_override = None  # e.g., "characters2"
 
+        # Image cache: state -> NSImage (avoids re-processing each time)
+        self._image_cache: dict = {}
+
         # Get initial terminal position for responsive sizing
         initial_pos = get_terminal_position()
         if self.responsive and initial_pos:
@@ -954,12 +993,12 @@ class Overlay(NSObject):
         # Animation timer (60fps for smooth movement)
         m = 'scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_'
         self.timer = getattr(NSTimer, m)(
-            0.016, self, 'animationTick:', None, True
+            ANIMATION_FRAME_TIME, self, 'animationTick:', None, True
         )
 
-        # Parent process monitor (check every 2s if terminal still alive)
+        # Parent process monitor (check periodically if terminal still alive)
         self.parent_check_timer = getattr(NSTimer, m)(
-            2.0, self, 'checkParentAlive:', None, True
+            PARENT_CHECK_INTERVAL, self, 'checkParentAlive:', None, True
         )
 
         # Defer window show to after run loop starts (fixes startup visibility)
@@ -981,11 +1020,11 @@ class Overlay(NSObject):
             'NSWorkspaceActiveSpaceDidChangeNotification', None
         )
 
-        # Fallback validation timer (500ms) - catches minimize, Space changes
+        # Fallback validation timer - catches minimize, Space changes
         self.validation_timer = None
         m = 'scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_'
         self.validation_timer = getattr(NSTimer, m)(
-            0.5, self, 'validateVisibility:', None, True
+            VISIBILITY_CHECK_INTERVAL, self, 'validateVisibility:', None, True
         )
 
         # Setup signal handlers for clean shutdown
@@ -1130,13 +1169,14 @@ class Overlay(NSObject):
         """Update state from socket message (thread-safe)."""
         # Only set terminal info ONCE on first message
         # Don't overwrite - each overlay owns its own terminal window
-        if self.terminal_pid is None:
-            new_pid = msg.get('terminal_pid')
-            new_window_id = msg.get('terminal_window_id')
-            if new_pid:
-                self.terminal_pid = new_pid
-            if new_window_id:
-                self.terminal_window_id = new_window_id
+        with self.state_lock:
+            if self.terminal_pid is None:
+                new_pid = msg.get('terminal_pid')
+                new_window_id = msg.get('terminal_window_id')
+                if new_pid:
+                    self.terminal_pid = new_pid
+                if new_window_id:
+                    self.terminal_window_id = new_window_id
 
         new_state = msg.get('state', 'idle')
 
@@ -1312,24 +1352,49 @@ class Overlay(NSObject):
                 img_path = self.theme_path / original_animation
 
             if img_path.exists():
-                if self.gradient_enabled and self.gradient_percentage > 0:
-                    # PIL path: load, resize, apply gradient, convert
-                    pil_img = Image.open(str(img_path))
-                    pil_img = pil_img.resize(
-                        (self.width, self.height),
-                        Image.Resampling.LANCZOS
-                    )
-                    pil_img = apply_bottom_gradient(
-                        pil_img, self.gradient_percentage
-                    )
-                    img = pil_to_nsimage(pil_img)
-                else:
-                    # Direct NSImage path (no gradient)
-                    img = NSImage.alloc().initWithContentsOfFile_(
-                        str(img_path)
-                    )
-                    if img:
-                        img.setSize_((self.width, self.height))
+                # Build cache key (path + size + gradient settings)
+                cache_key = (
+                    str(img_path), self.width, self.height,
+                    self.gradient_enabled, self.gradient_percentage
+                )
+
+                # Check cache first
+                img = self._image_cache.get(cache_key)
+
+                if img is None:
+                    # Cache miss - load and process image
+                    try:
+                        use_gradient = (
+                            self.gradient_enabled
+                            and self.gradient_percentage > 0
+                        )
+                        if use_gradient:
+                            # PIL path: load, resize, apply gradient
+                            pil_img = Image.open(str(img_path))
+                            if pil_img.mode not in ('RGBA', 'RGB'):
+                                pil_img = pil_img.convert('RGBA')
+                            pil_img = pil_img.resize(
+                                (self.width, self.height),
+                                Image.Resampling.LANCZOS
+                            )
+                            pil_img = apply_bottom_gradient(
+                                pil_img, self.gradient_percentage
+                            )
+                            img = pil_to_nsimage(pil_img)
+                        else:
+                            # Direct NSImage path (no gradient)
+                            img = NSImage.alloc().initWithContentsOfFile_(
+                                str(img_path)
+                            )
+                            if img:
+                                img.setSize_((self.width, self.height))
+
+                        # Store in cache
+                        if img:
+                            self._image_cache[cache_key] = img
+                    except Exception:
+                        # Image load failed - skip silently
+                        return
 
                 if img:
                     if crossfade and self.fade_animation:
@@ -1345,7 +1410,8 @@ class Overlay(NSObject):
         # Animate crossfade
         NSAnimationContext.beginGrouping()
         try:
-            NSAnimationContext.currentContext().setDuration_(0.2)
+            ctx = NSAnimationContext.currentContext()
+            ctx.setDuration_(CROSSFADE_DURATION)
             self.image_view_front.animator().setAlphaValue_(0.0)
             self.image_view_back.animator().setAlphaValue_(1.0)
         finally:
@@ -1355,7 +1421,7 @@ class Overlay(NSObject):
         timer_method = 'scheduledTimerWithTimeInterval_' \
             'target_selector_userInfo_repeats_'
         getattr(NSTimer, timer_method)(
-            0.25, self, 'swapImageViews:', None, False
+            CROSSFADE_DURATION + 0.05, self, 'swapImageViews:', None, False
         )
 
     def swapImageViews_(self, timer):
@@ -1583,7 +1649,7 @@ class Overlay(NSObject):
         """Run animations and track terminal position (called by NSTimer)."""
         try:
             # Visibility check during startup grace period
-            in_grace = (time.time() - self.startup_time) < 1.5
+            in_grace = (time.time() - self.startup_time) < STARTUP_GRACE_PERIOD
             if in_grace and self.show_only_when_active:
                 if not is_our_window_frontmost(
                     self.terminal_pid, self.terminal_window_id
@@ -1593,7 +1659,7 @@ class Overlay(NSObject):
 
             # Track terminal position and size (follow window)
             if self.is_visible and self.terminal_window_id:
-                current_pos = get_terminal_window_position(
+                current_pos = get_terminal_window_position_cached(
                     self.terminal_window_id
                 )
                 if current_pos:
@@ -1741,7 +1807,8 @@ class Overlay(NSObject):
         if self.fade_animation:
             NSAnimationContext.beginGrouping()
             try:
-                NSAnimationContext.currentContext().setDuration_(0.3)
+                ctx = NSAnimationContext.currentContext()
+                ctx.setDuration_(FADE_DURATION)
                 self.window.animator().setAlphaValue_(1.0)
             finally:
                 NSAnimationContext.endGrouping()
@@ -1756,7 +1823,8 @@ class Overlay(NSObject):
         if self.fade_animation:
             NSAnimationContext.beginGrouping()
             try:
-                NSAnimationContext.currentContext().setDuration_(0.3)
+                ctx = NSAnimationContext.currentContext()
+                ctx.setDuration_(FADE_DURATION)
                 self.window.animator().setAlphaValue_(0.0)
             finally:
                 NSAnimationContext.endGrouping()
@@ -1764,7 +1832,7 @@ class Overlay(NSObject):
             timer_method = 'scheduledTimerWithTimeInterval_' \
                 'target_selector_userInfo_repeats_'
             getattr(NSTimer, timer_method)(
-                0.3, self, 'hideWindow:', None, False
+                FADE_DURATION, self, 'hideWindow:', None, False
             )
         else:
             self.window.setAlphaValue_(0.0)
@@ -1866,7 +1934,7 @@ class Overlay(NSObject):
             return
 
         # Skip during startup grace period
-        if (time.time() - self.startup_time) < 1.5:
+        if (time.time() - self.startup_time) < STARTUP_GRACE_PERIOD:
             return
 
         # Check if window is on-screen (catches minimize, Space change)

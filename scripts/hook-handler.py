@@ -5,6 +5,7 @@ Includes setup checking on SessionStart.
 """
 
 import json
+import logging
 import os
 import signal
 import socket
@@ -13,6 +14,15 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional
+
+# Debug logging (set CLAUDE_FX_DEBUG=1 to enable)
+_debug = os.environ.get('CLAUDE_FX_DEBUG', '0') == '1'
+logging.basicConfig(
+    level=logging.DEBUG if _debug else logging.WARNING,
+    format='[claude-fx] %(levelname)s: %(message)s',
+    stream=sys.stderr
+)
+logger = logging.getLogger(__name__)
 
 # Session ID cache (terminal PID, set once per hook invocation)
 _session_id = None
@@ -48,8 +58,10 @@ TERMINAL_NAMES = {
     'Terminal', 'iTerm2', 'Alacritty', 'kitty', 'Warp', 'WezTerm'
 }
 
-# Cache for terminal info
+# Cache for terminal info with TTL
 _terminal_info = None
+_terminal_info_time: float = 0.0
+TERMINAL_INFO_CACHE_TTL = 30.0  # Refresh every 30 seconds
 
 
 def get_terminal_info() -> Optional[dict]:
@@ -60,9 +72,14 @@ def get_terminal_info() -> Optional[dict]:
     - terminal_pid: PID of terminal app (for visibility tracking)
     - window_id: Terminal window ID (for visibility tracking)
     """
-    global _terminal_info
+    global _terminal_info, _terminal_info_time
+
+    # Return cached if still valid
+    now = time.time()
     if _terminal_info is not None:
-        return _terminal_info
+        if (now - _terminal_info_time) < TERMINAL_INFO_CACHE_TTL:
+            return _terminal_info
+        logger.debug("Terminal info cache expired, refreshing")
 
     # Walk process tree to find shell and terminal
     shell_pid = None
@@ -143,6 +160,8 @@ def get_terminal_info() -> Optional[dict]:
         'terminal_pid': terminal_pid,
         'window_id': window_id
     }
+    _terminal_info_time = time.time()
+    logger.debug(f"Terminal info cached: {_terminal_info}")
     return _terminal_info
 
 
@@ -226,10 +245,12 @@ def send_state_to_overlay(state: str, tool: str = None) -> bool:
     """Send state update to overlay via socket. Returns True if successful."""
     session_id = get_session_id()
     if not session_id:
+        logger.debug("No session ID available")
         return False
 
     socket_path = get_socket_path(session_id)
     if not socket_path.exists():
+        logger.debug(f"Socket not found: {socket_path}")
         return False
 
     # Get terminal info for visibility tracking
@@ -251,10 +272,19 @@ def send_state_to_overlay(state: str, tool: str = None) -> bool:
         sock.sendall(f'{json.dumps(msg)}\n'.encode('utf-8'))
         response = sock.recv(1024).decode('utf-8').strip()
         sock.close()
+        logger.debug(f"State sent: {state}, response: {response[:50]}")
         return response.startswith('{"status": "ok"}')
-    except (socket.timeout, ConnectionRefusedError, FileNotFoundError):
+    except socket.timeout:
+        logger.debug(f"Socket timeout connecting to {socket_path}")
         return False
-    except Exception:
+    except ConnectionRefusedError:
+        logger.debug(f"Connection refused: {socket_path}")
+        return False
+    except FileNotFoundError:
+        logger.debug(f"Socket file not found: {socket_path}")
+        return False
+    except Exception as e:
+        logger.debug(f"Socket error: {e}")
         return False
 
 
@@ -521,10 +551,16 @@ def main():
 
     # Start overlay if not running and enabled
     if overlay_enabled and not sent and not is_overlay_running():
+        logger.debug("Starting overlay process")
         start_overlay()
-        # Give overlay time to start, then send state again
-        time.sleep(0.3)
-        send_state_to_overlay(state, tool)
+        # Retry with exponential backoff (100ms, 200ms, 400ms)
+        for attempt, delay in enumerate([0.1, 0.2, 0.4]):
+            time.sleep(delay)
+            if send_state_to_overlay(state, tool):
+                logger.debug(f"State sent on attempt {attempt + 1}")
+                break
+        else:
+            logger.debug("Failed to send state after retries")
 
     # Play sound (via overlay's NSSound - no subprocess)
     send_sound_to_overlay(state)
