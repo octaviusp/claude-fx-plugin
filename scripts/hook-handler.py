@@ -6,6 +6,7 @@ Includes setup checking on SessionStart.
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -14,6 +15,9 @@ from pathlib import Path
 
 # Session ID cache (terminal PID, set once per hook invocation)
 _session_id = None
+
+# Track sound processes for cleanup
+_sound_processes = []
 
 # Paths
 HOME = Path.home()
@@ -278,25 +282,97 @@ def is_overlay_running() -> bool:
         return False
 
 
+def _cleanup_session_files(session_id: int):
+    """Remove socket and PID files for a session."""
+    socket_path = get_socket_path(session_id)
+    pid_path = FX_DIR / f'pid-{session_id}.txt'
+
+    if socket_path.exists():
+        try:
+            socket_path.unlink()
+        except Exception:
+            pass
+    if pid_path.exists():
+        try:
+            pid_path.unlink()
+        except Exception:
+            pass
+
+
 def shutdown_overlay():
-    """Send shutdown command to overlay via socket."""
+    """Send shutdown command via socket, with forceful kill fallback."""
     session_id = get_session_id()
     if not session_id:
         return
 
     socket_path = get_socket_path(session_id)
-    if not socket_path.exists():
-        return
+    pid_path = FX_DIR / f'pid-{session_id}.txt'
 
+    shutdown_sent = False
+
+    # Try graceful shutdown via socket
+    if socket_path.exists():
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(1.0)
+            sock.connect(str(socket_path))
+            sock.sendall(b'{"cmd": "SHUTDOWN"}\n')
+            sock.recv(1024)  # Wait for ack
+            sock.close()
+            shutdown_sent = True
+        except Exception:
+            pass
+
+    # Forceful kill fallback using PID file
+    if not shutdown_sent and pid_path.exists():
+        try:
+            pid = int(pid_path.read_text().strip())
+            os.kill(pid, signal.SIGTERM)
+            # Give it 0.5s to exit gracefully
+            time.sleep(0.5)
+            # If still alive, SIGKILL
+            try:
+                os.kill(pid, 0)  # Check if alive
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # Already dead
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+
+    # Clean up files regardless
+    _cleanup_session_files(session_id)
+
+
+def kill_orphaned_overlays():
+    """Kill any overlay processes that don't have a valid session."""
     try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(1.0)
-        sock.connect(str(socket_path))
-        sock.sendall(b'{"cmd": "SHUTDOWN"}\n')
-        sock.recv(1024)  # Wait for ack
-        sock.close()
+        # Find all overlay.py processes
+        result = subprocess.run(
+            ['pgrep', '-f', 'overlay.py'],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            return
+
+        pids = [int(p) for p in result.stdout.strip().split('\n') if p]
+
+        # Get list of valid overlay PIDs from existing PID files
+        valid_pids = set()
+        for pid_file in FX_DIR.glob('pid-*.txt'):
+            try:
+                valid_pids.add(int(pid_file.read_text().strip()))
+            except Exception:
+                pass
+
+        # Kill any overlay not in valid set
+        for pid in pids:
+            if pid not in valid_pids:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except Exception:
+                    pass
     except Exception:
-        pass  # Best effort
+        pass
 
 
 def change_character_folder(folder: str) -> dict:
@@ -403,6 +479,8 @@ def find_sound_file(state: str, theme: str, manifest: dict) -> Path | None:
 
 def play_sound(state: str, settings: dict):
     """Play sound for state (macOS). Uses afplay for native playback."""
+    global _sound_processes
+
     # Check if audio is enabled
     audio_cfg = settings.get('audio', {})
     if not audio_cfg.get('enabled', True):
@@ -419,13 +497,28 @@ def play_sound(state: str, settings: dict):
         return
 
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             ['afplay', '-v', str(volume), str(sound_path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
+        _sound_processes.append(proc)
+
+        # Clean up finished processes
+        _sound_processes = [p for p in _sound_processes if p.poll() is None]
     except Exception:
         pass
+
+
+def kill_sound_processes():
+    """Kill any running sound processes."""
+    global _sound_processes
+    for proc in _sound_processes:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    _sound_processes = []
 
 
 def main():
@@ -470,11 +563,14 @@ def main():
     state = map_event_to_state(event, is_error)
     tool = data.get('tool_name')
 
-    # Handle SessionEnd - show farewell and shutdown overlay (non-blocking)
+    # Handle SessionEnd - show farewell and shutdown overlay
     if event == 'SessionEnd':
         send_state_to_overlay(state, tool)
         play_sound('farewell', settings)
-        shutdown_overlay()
+        time.sleep(0.3)  # Brief delay for farewell to show
+        kill_sound_processes()  # Stop any playing sounds
+        shutdown_overlay()  # Graceful + forceful fallback
+        kill_orphaned_overlays()  # Clean up any strays
         sys.exit(0)
 
     # Send state to overlay via socket
