@@ -19,5 +19,27 @@
     "enabled": true,
     "volume": 0.5
   },
-  "theme": "default"
+  "theme": "default",
+  "immersion": {
+    "breathing": true,
+    "sway": true,
+    "cursorInfluence": true,
+    "cursorInfluenceStrength": 0.5,
+    "transitions": true
+  },
+  "speechBubble": {
+    "enabled": true,
+    "backgroundColor": "#1a1a2e",
+    "borderColor": "#4a9eff",
+    "borderWidth": 2,
+    "borderRadius": 8,
+    "fontFamily": "SF Mono",
+    "fontSize": 13,
+    "fontColor": "#ffffff",
+    "padding": 10,
+    "displayDuration": 3.0
+  },
+  "emotionOverlays": {
+    "enabled": true
+  }
 }

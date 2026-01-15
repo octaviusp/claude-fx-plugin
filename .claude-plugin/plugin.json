@@ -1,11 +1,22 @@
 {
   "name": "claude-fx-plugin",
-  "description": "Visual and audio feedback for Claude Code - animated mascot overlay that reacts to your coding session",
-  "version": "1.0.0",
+  "description": "Animated mascot companion for Claude Code - immersive overlay with breathing, speech bubbles, and emotion effects",
+  "version": "2.0.0",
   "author": {
     "name": "Octavio"
   },
   "homepage": "https://github.com/octaviusp/claude-fx-plugin",
   "license": "MIT",
-  "keywords": ["claude", "fx", "visual", "audio", "overlay", "animation", "mascot", "macos"]
+  "keywords": [
+    "claude",
+    "fx",
+    "visual",
+    "audio",
+    "overlay",
+    "animation",
+    "mascot",
+    "macos",
+    "immersion",
+    "speech-bubble"
+  ]
 }

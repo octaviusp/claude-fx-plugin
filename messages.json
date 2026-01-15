@@ -1,0 +1,57 @@
+{
+  "greeting": [
+    "Ready when you are.",
+    "Let's build something.",
+    "Good to see you.",
+    "What are we making?",
+    "Let's do this."
+  ],
+  "working": [
+    "On it...",
+    "Processing...",
+    "Give me a sec.",
+    "Working on it...",
+    "Thinking..."
+  ],
+  "success": [
+    "Done.",
+    "Got it.",
+    "Clean.",
+    "All set.",
+    "Nailed it."
+  ],
+  "error": [
+    "Hmm, let me check.",
+    "Something's off.",
+    "Hold on...",
+    "That's not right.",
+    "Let me try again."
+  ],
+  "celebrating": [
+    "Nice work!",
+    "Victory!",
+    "We did it!",
+    "Awesome!",
+    "Perfect!"
+  ],
+  "sleeping": [
+    "Zzz...",
+    "*yawn*",
+    "...",
+    "*snore*"
+  ],
+  "farewell": [
+    "See you!",
+    "Bye for now.",
+    "Until next time.",
+    "Take care!",
+    "Catch you later."
+  ],
+  "idle": [
+    "Need anything?",
+    "I'm here.",
+    "...",
+    "Ready.",
+    "Standing by."
+  ]
+}
