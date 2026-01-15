@@ -30,3 +30,6 @@ htmlcov/
 # Distribution
 dist/
 *.tar.gz
+
+# Local settings
+.claude/

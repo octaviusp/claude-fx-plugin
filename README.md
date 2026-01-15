@@ -18,7 +18,7 @@ Animated mascot companion for Claude Code. A transparent overlay that floats bes
 
 ```bash
 # 1. Clone the plugin
-git clone https://github.com/octaviopavon/claude-fx-plugin
+git clone https://github.com/octaviusp/claude-fx-plugin
 
 # 2. Run Claude Code with the plugin
 claude --plugin-dir ./claude-fx-plugin
@@ -180,4 +180,4 @@ MIT - See [LICENSE](LICENSE) for details.
 
 ## Author
 
-[Octavio](https://github.com/octaviopavon)
+[Octavio](https://github.com/octaviusp)
