@@ -26,6 +26,7 @@ try:
     from Quartz import (
         CGWindowListCopyWindowInfo,
         kCGWindowListOptionOnScreenOnly,
+        kCGWindowListExcludeDesktopElements,
         kCGNullWindowID,
         CGColorCreateGenericRGB,
     )
@@ -145,31 +146,41 @@ def get_terminal_position():
     return {'x': 100, 'y': 100, 'w': 800, 'h': 600}
 
 
-def is_terminal_window_visible(terminal_pid: int, window_id: int) -> bool:
-    """Check if our specific terminal window is visible and frontmost."""
+def is_our_window_frontmost(terminal_pid: int, window_id: int) -> bool:
+    """Check if our terminal window is frontmost. FAIL-SAFE: returns False."""
     if not terminal_pid:
-        return True  # Fallback: always show if no PID tracked
+        return False  # FAIL-SAFE: hide if no PID
 
     try:
-        # First check if terminal app is frontmost
+        # Check app first (fast path)
         frontmost = NSWorkspace.sharedWorkspace().frontmostApplication()
         if frontmost.processIdentifier() != terminal_pid:
             return False  # Different app is active
 
-        # If we have a window ID, check if it's the topmost terminal window
-        if window_id:
-            windows = CGWindowListCopyWindowInfo(
-                kCGWindowListOptionOnScreenOnly, kCGNullWindowID
-            )
-            # Find first window belonging to our terminal (topmost)
-            for w in windows:
-                if w.get('kCGWindowOwnerPID') == terminal_pid:
-                    # First terminal window we find is the frontmost one
-                    return w.get('kCGWindowNumber') == window_id
+        # Check window via CGWindowList
+        opts = (kCGWindowListOptionOnScreenOnly |
+                kCGWindowListExcludeDesktopElements)
+        windows = CGWindowListCopyWindowInfo(opts, kCGNullWindowID)
+        if not windows:
+            return False
 
-        return True  # Fallback if no window ID
+        # Find frontmost normal window (layer 0)
+        for w in windows:
+            if w.get('kCGWindowLayer', 0) != 0:
+                continue  # Skip menus, popups, etc.
+
+            # First layer-0 window is the frontmost
+            w_pid = w.get('kCGWindowOwnerPID')
+            w_id = w.get('kCGWindowNumber')
+
+            if window_id:
+                return w_pid == terminal_pid and w_id == window_id
+            else:
+                return w_pid == terminal_pid
+
+        return False
     except Exception:
-        return True
+        return False  # FAIL-SAFE: hide on any error
 
 
 def get_terminal_window_position(window_id: int) -> dict | None:
@@ -327,6 +338,14 @@ class Overlay:
         # Defer window show to after run loop starts (fixes startup visibility)
         getattr(NSTimer, m)(0.1, self, 'showWindowDeferred:', None, False)
 
+        # Subscribe to app activation notifications (event-driven visibility)
+        self.pending_show_timer = None
+        nc = NSWorkspace.sharedWorkspace().notificationCenter()
+        nc.addObserver_selector_name_object_(
+            self, 'appDidActivate:',
+            'NSWorkspaceDidActivateApplicationNotification', None
+        )
+
         # Write PID
         self.write_pid()
 
@@ -477,6 +496,9 @@ class Overlay:
 
     def exitApp_(self, timer):
         """Exit the application cleanly."""
+        # Remove notification observer
+        nc = NSWorkspace.sharedWorkspace().notificationCenter()
+        nc.removeObserver_(self)
         # Stop the poll timer
         if self.timer:
             self.timer.invalidate()
@@ -485,6 +507,7 @@ class Overlay:
         if self.pending_idle_timer:
             self.pending_idle_timer.invalidate()
             self.pending_idle_timer = None
+        self.cancel_pending_show()
         # Clean up PID file and lock file
         if PID_FILE.exists():
             PID_FILE.unlink()
@@ -544,16 +567,16 @@ class Overlay:
                     self.terminal_pid = data.get('terminal_pid')
                     self.terminal_window_id = data.get('terminal_window_id')
 
-                # Check visibility (skip during 1.5s startup grace period)
+                # Visibility is now event-driven via appDidActivate_
+                # Only do initial check during startup grace period
                 in_grace = (time.time() - self.startup_time) < 1.5
-                if self.show_only_when_active and not in_grace:
-                    should_show = is_terminal_window_visible(
+                if in_grace and self.show_only_when_active:
+                    # During grace period, verify we should be visible
+                    if not is_our_window_frontmost(
                         self.terminal_pid, self.terminal_window_id
-                    )
-                    if should_show and not self.is_visible:
-                        self.fadeIn()
-                    elif not should_show and self.is_visible:
-                        self.fadeOut()
+                    ):
+                        if self.is_visible:
+                            self.fadeOut()
 
                 # Track terminal position and size (follow window)
                 if self.is_visible and self.terminal_window_id:
@@ -659,6 +682,47 @@ class Overlay:
         """Called after fade out animation to hide window."""
         if not self.is_visible:
             self.window.orderOut_(None)
+
+    def appDidActivate_(self, notification):
+        """Called instantly when any app becomes frontmost."""
+        try:
+            app = notification.userInfo()['NSWorkspaceApplicationKey']
+            active_pid = app.processIdentifier()
+
+            if active_pid != self.terminal_pid:
+                # Different app - HIDE IMMEDIATELY
+                self.cancel_pending_show()
+                if self.is_visible:
+                    self.fadeOut()
+            else:
+                # Our terminal - schedule debounced show check
+                self.schedule_show_check()
+        except Exception:
+            # On any error, hide to be safe
+            self.cancel_pending_show()
+            if self.is_visible:
+                self.fadeOut()
+
+    def schedule_show_check(self):
+        """Debounce: wait 50ms before showing to prevent flashing."""
+        self.cancel_pending_show()
+        m = 'scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_'
+        self.pending_show_timer = getattr(NSTimer, m)(
+            0.05, self, 'verifyAndShow:', None, False
+        )
+
+    def cancel_pending_show(self):
+        """Cancel any pending show timer."""
+        if self.pending_show_timer:
+            self.pending_show_timer.invalidate()
+            self.pending_show_timer = None
+
+    def verifyAndShow_(self, timer):
+        """Verify our window is focused before showing."""
+        self.pending_show_timer = None
+        if is_our_window_frontmost(self.terminal_pid, self.terminal_window_id):
+            if not self.is_visible:
+                self.fadeIn()
 
     def run(self):
         """Start the overlay."""
