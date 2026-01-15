@@ -4,6 +4,7 @@ Claude FX Hook Handler - Receives hook events and updates overlay state.
 Includes setup checking on SessionStart.
 """
 
+import fcntl
 import json
 import os
 import subprocess
@@ -25,6 +26,11 @@ def get_session_paths(window_id: int) -> tuple[Path, Path]:
         FX_DIR / f'state-{window_id}.json',
         FX_DIR / f'overlay-{window_id}.pid'
     )
+
+
+def get_lock_file(window_id: int) -> Path:
+    """Get lock file path for a session."""
+    return FX_DIR / f'overlay-{window_id}.lock'
 
 
 def get_session_id() -> int | None:
@@ -216,19 +222,29 @@ def write_state(state: str, tool: str = None):
 
 
 def is_overlay_running() -> bool:
-    """Check if session-specific overlay process is running."""
-    window_id = get_session_id()
-    if not window_id:
+    """Check if overlay is running using lock file."""
+    session_id = get_session_id()
+    if not session_id:
         return False
-    _, pid_file = get_session_paths(window_id)
-    if pid_file.exists():
+
+    lock_file = get_lock_file(session_id)
+    if not lock_file.exists():
+        return False
+
+    # Try to acquire lock - if we can't, overlay holds it
+    try:
+        fd = os.open(str(lock_file), os.O_RDWR)
         try:
-            pid = int(pid_file.read_text())
-            os.kill(pid, 0)
-            return True
-        except (ValueError, ProcessLookupError, PermissionError):
-            pid_file.unlink(missing_ok=True)
-    return False
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Got lock - no overlay running, release it
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+            return False
+        except BlockingIOError:
+            os.close(fd)
+            return True  # Lock held by overlay
+    except Exception:
+        return False
 
 
 def stop_overlay():
@@ -237,14 +253,27 @@ def stop_overlay():
     if not window_id:
         return
     state_file, pid_file = get_session_paths(window_id)
-    if pid_file.exists():
+    lock_file = get_lock_file(window_id)
+
+    # Try to get PID from lock file first, then fall back to pid file
+    pid = None
+    for f in [lock_file, pid_file]:
+        if f.exists():
+            try:
+                pid = int(f.read_text().strip())
+                break
+            except (ValueError, OSError):
+                pass
+
+    if pid:
         try:
-            pid = int(pid_file.read_text())
             os.kill(pid, 15)  # SIGTERM
-        except (ValueError, ProcessLookupError, PermissionError):
+        except (ProcessLookupError, PermissionError):
             pass
-        pid_file.unlink(missing_ok=True)
-    # Clean up state file too
+
+    # Clean up all files
+    pid_file.unlink(missing_ok=True)
+    lock_file.unlink(missing_ok=True)
     state_file.unlink(missing_ok=True)
 
 

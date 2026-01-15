@@ -4,6 +4,7 @@ Claude FX Overlay - True transparent overlay using PyObjC (macOS).
 Displays PNG/GIF mascot with real transparency - no background window.
 """
 
+import fcntl
 import json
 import math
 import os
@@ -48,6 +49,29 @@ def get_session_paths() -> tuple[Path, Path]:
             FX_DIR / f'overlay-{SESSION_ID}.pid'
         )
     return (FX_DIR / 'state.json', FX_DIR / 'overlay.pid')
+
+
+def get_lock_file() -> Path:
+    """Get lock file path for this session."""
+    if SESSION_ID:
+        return FX_DIR / f'overlay-{SESSION_ID}.lock'
+    return FX_DIR / 'overlay.lock'
+
+
+def try_acquire_lock() -> int | None:
+    """Try to acquire exclusive lock. Returns fd or None if locked."""
+    lock_file = get_lock_file()
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_file), os.O_RDWR | os.O_CREAT)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Write our PID to lock file
+        os.ftruncate(fd, 0)
+        os.write(fd, str(os.getpid()).encode())
+        return fd  # Keep fd open to maintain lock
+    except BlockingIOError:
+        os.close(fd)
+        return None
 
 
 STATE_FILE, PID_FILE = get_session_paths()
@@ -439,9 +463,12 @@ class Overlay:
         if self.pending_idle_timer:
             self.pending_idle_timer.invalidate()
             self.pending_idle_timer = None
-        # Clean up PID file
+        # Clean up PID file and lock file
         if PID_FILE.exists():
             PID_FILE.unlink()
+        lock_file = get_lock_file()
+        if lock_file.exists():
+            lock_file.unlink(missing_ok=True)
         # Terminate
         self.app.terminate_(None)
 
@@ -601,26 +628,19 @@ class Overlay:
         finally:
             if PID_FILE.exists():
                 PID_FILE.unlink()
-
-
-def is_running() -> bool:
-    """Check if overlay is already running."""
-    if PID_FILE.exists():
-        try:
-            pid = int(PID_FILE.read_text())
-            os.kill(pid, 0)
-            return True
-        except (ValueError, ProcessLookupError, PermissionError):
-            PID_FILE.unlink()
-    return False
+            lock_file = get_lock_file()
+            if lock_file.exists():
+                lock_file.unlink(missing_ok=True)
 
 
 def main():
-    if is_running():
-        print("Overlay already running")
+    lock_fd = try_acquire_lock()
+    if lock_fd is None:
+        print("Overlay already running (locked)")
         sys.exit(0)
 
     overlay = Overlay()
+    overlay.lock_fd = lock_fd  # Keep fd open to maintain lock
     overlay.run()
 
 
