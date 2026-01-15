@@ -1,6 +1,6 @@
 {
   "name": "claude-fx-plugin",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Visual and audio feedback for Claude Code - animated mascot overlay that reacts to your coding session",
   "author": {
     "name": "Octavio",

@@ -16,9 +16,35 @@ SAMPLE_SETTINGS = {
         "offsetY": 0,
         "showOnlyWhenTerminalActive": True,
         "fadeAnimation": True,
+        "bottomGradient": {
+            "enabled": True,
+            "percentage": 0.8
+        }
     },
     "audio": {"enabled": True, "volume": 0.5},
     "theme": "default",
+    "immersion": {
+        "breathing": True,
+        "sway": True,
+        "cursorInfluence": True,
+        "cursorInfluenceStrength": 0.5,
+        "transitions": True
+    },
+    "speechBubble": {
+        "enabled": True,
+        "backgroundColor": "#1a1a2e",
+        "borderColor": "#4a9eff",
+        "borderWidth": 2,
+        "borderRadius": 8,
+        "fontFamily": "SF Mono",
+        "fontSize": 13,
+        "fontColor": "#ffffff",
+        "padding": 10,
+        "displayDuration": 3.0
+    },
+    "emotionOverlays": {
+        "enabled": True
+    }
 }
 
 SAMPLE_SETTINGS_DISABLED = {

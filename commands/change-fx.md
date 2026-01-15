@@ -42,13 +42,30 @@ Edit `settings-fx.json` in the plugin folder:
 ```json
 {
   "overlay": {
-    "maxHeight": 350,
-    "bottomGradient": { "enabled": true, "percentage": 0.2 }
+    "maxHeight": 500,
+    "bottomGradient": { "enabled": true, "percentage": 0.8 }
   },
-  "audio": { "volume": 0.5, "enabled": true }
+  "audio": { "volume": 0.5, "enabled": true },
+  "immersion": {
+    "breathing": true,
+    "sway": true,
+    "cursorInfluence": true,
+    "transitions": true
+  },
+  "speechBubble": {
+    "enabled": true,
+    "displayDuration": 3.0
+  },
+  "emotionOverlays": {
+    "enabled": true
+  }
 }
 ```
 
-**Bottom Gradient:** Fades the bottom 20% of the image to transparent so you can read text behind it. Adjust `percentage` (0.0-1.0) or set `enabled: false` to disable.
+**Key Settings:**
+- **Bottom Gradient:** Fades the bottom of the image (default 80%)
+- **Immersion:** Breathing, sway, cursor tracking animations
+- **Speech Bubbles:** Customizable styled message bubbles
+- **Emotion Overlays:** Sparkles, sweat drops, zzz effects
 
 Changes take effect on next Claude Code session.

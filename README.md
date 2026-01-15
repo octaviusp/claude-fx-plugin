@@ -74,10 +74,12 @@ Edit `settings-fx.json` in the plugin folder:
     "enabled": true,
     "backgroundColor": "#1a1a2e",
     "borderColor": "#4a9eff",
+    "borderWidth": 2,
     "borderRadius": 8,
     "fontFamily": "SF Mono",
     "fontSize": 13,
     "fontColor": "#ffffff",
+    "padding": 10,
     "displayDuration": 3.0
   },
   "emotionOverlays": {
@@ -114,10 +116,12 @@ Edit `settings-fx.json` in the plugin folder:
 | `speechBubble.enabled` | Show speech bubbles | `true` |
 | `speechBubble.backgroundColor` | Bubble background (hex) | `#1a1a2e` |
 | `speechBubble.borderColor` | Bubble border (hex) | `#4a9eff` |
+| `speechBubble.borderWidth` | Border thickness in pixels | `2` |
 | `speechBubble.borderRadius` | Corner radius in pixels | `8` |
 | `speechBubble.fontFamily` | Font family name | `SF Mono` |
 | `speechBubble.fontSize` | Font size in points | `13` |
 | `speechBubble.fontColor` | Text color (hex) | `#ffffff` |
+| `speechBubble.padding` | Inner padding in pixels | `10` |
 | `speechBubble.displayDuration` | Seconds to show bubble | `3.0` |
 
 #### Emotion Overlays

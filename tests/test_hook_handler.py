@@ -387,153 +387,67 @@ class TestCleanupLegacyFiles:
         handler.cleanup_legacy_files()
 
 
-class TestPlaySound:
-    """Tests for play_sound() function."""
+class TestSendSoundToOverlay:
+    """Tests for send_sound_to_overlay() function."""
 
-    def test_play_sound_enabled(self, tmp_path, mocker, handler):
-        """Plays sound when audio enabled."""
-        theme_dir = tmp_path / "themes" / "default" / "sounds"
-        theme_dir.mkdir(parents=True)
-        sound_file = theme_dir / "greeting.wav"
-        sound_file.write_text("sound data")
+    def test_send_sound_no_session_id(self, mocker, handler):
+        """Returns False when no session ID."""
+        mocker.patch.object(handler, "get_session_id", return_value=None)
 
-        handler.PLUGIN_ROOT = tmp_path
+        result = handler.send_sound_to_overlay("greeting")
+        assert result is False
 
-        mock_popen = mocker.patch("subprocess.Popen")
+    def test_send_sound_no_socket(self, tmp_path, mocker, handler):
+        """Returns False when socket doesn't exist."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        handler.FX_DIR = fx_dir
 
-        settings = {
-            "audio": {"enabled": True, "volume": 0.7},
-            "theme": "default"
-        }
-        handler.play_sound("greeting", settings)
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
 
-        mock_popen.assert_called_once()
-        call_args = mock_popen.call_args[0][0]
-        assert "afplay" in call_args
-        assert "0.7" in call_args
+        result = handler.send_sound_to_overlay("greeting")
+        assert result is False
 
-    def test_play_sound_disabled(self, mocker, handler):
-        """Skips sound when audio disabled."""
-        mock_popen = mocker.patch("subprocess.Popen")
+    def test_send_sound_success(self, tmp_path, mocker, handler):
+        """Successfully sends sound command via socket."""
+        import socket as sock_mod
 
-        settings = {"audio": {"enabled": False}}
-        handler.play_sound("greeting", settings)
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        socket_file = fx_dir / "sock-12345.sock"
+        socket_file.write_text("")
+        handler.FX_DIR = fx_dir
 
-        mock_popen.assert_not_called()
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
 
-    def test_play_sound_missing_file(self, tmp_path, mocker, handler):
-        """Handles missing sound file gracefully."""
-        handler.PLUGIN_ROOT = tmp_path
+        mock_socket = MagicMock()
+        mock_socket.recv.return_value = b'{"status": "ok"}'
+        mocker.patch.object(sock_mod, "socket", return_value=mock_socket)
 
-        mock_popen = mocker.patch("subprocess.Popen")
+        result = handler.send_sound_to_overlay("greeting")
 
-        settings = {"audio": {"enabled": True}, "theme": "default"}
-        handler.play_sound("greeting", settings)
+        assert result is True
+        mock_socket.connect.assert_called_once()
+        mock_socket.sendall.assert_called_once()
 
-        mock_popen.assert_not_called()
+    def test_send_sound_socket_error(self, tmp_path, mocker, handler):
+        """Returns False on socket error."""
+        import socket as sock_mod
 
-    def test_play_sound_unknown_state(self, mocker, handler):
-        """Handles unknown state gracefully."""
-        mock_popen = mocker.patch("subprocess.Popen")
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        socket_file = fx_dir / "sock-12345.sock"
+        socket_file.write_text("")
+        handler.FX_DIR = fx_dir
 
-        settings = {"audio": {"enabled": True}}
-        handler.play_sound("unknown_state", settings)
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
 
-        mock_popen.assert_not_called()
+        mock_socket = MagicMock()
+        mock_socket.connect.side_effect = ConnectionRefusedError
+        mocker.patch.object(sock_mod, "socket", return_value=mock_socket)
 
-
-class TestLoadManifest:
-    """Tests for load_manifest() function."""
-
-    def test_load_manifest_valid(self, tmp_path, handler):
-        """Loads valid manifest.json."""
-        theme_dir = tmp_path / "themes" / "default"
-        theme_dir.mkdir(parents=True)
-        manifest = {"name": "test", "states": {"idle": {"sound": None}}}
-        (theme_dir / "manifest.json").write_text(json.dumps(manifest))
-
-        handler.PLUGIN_ROOT = tmp_path
-        result = handler.load_manifest("default")
-
-        assert result["name"] == "test"
-
-    def test_load_manifest_missing(self, tmp_path, handler):
-        """Returns empty dict for missing manifest."""
-        handler.PLUGIN_ROOT = tmp_path
-        result = handler.load_manifest("nonexistent")
-        assert result == {}
-
-    def test_load_manifest_invalid_json(self, tmp_path, handler):
-        """Returns empty dict for invalid JSON."""
-        theme_dir = tmp_path / "themes" / "default"
-        theme_dir.mkdir(parents=True)
-        (theme_dir / "manifest.json").write_text("{ invalid }")
-
-        handler.PLUGIN_ROOT = tmp_path
-        result = handler.load_manifest("default")
-        assert result == {}
-
-
-class TestFindSoundFile:
-    """Tests for find_sound_file() function."""
-
-    def test_find_sound_from_manifest(self, tmp_path, handler):
-        """Finds sound file via manifest path."""
-        theme_dir = tmp_path / "themes" / "default"
-        sounds_dir = theme_dir / "sounds"
-        sounds_dir.mkdir(parents=True)
-        (sounds_dir / "custom.mp3").write_text("sound")
-
-        manifest = {"states": {"greeting": {"sound": "sounds/custom.mp3"}}}
-        handler.PLUGIN_ROOT = tmp_path
-
-        result = handler.find_sound_file("greeting", "default", manifest)
-        assert result.name == "custom.mp3"
-
-    def test_find_sound_fallback_to_state_name(self, tmp_path, handler):
-        """Falls back to state-named file when manifest has no sound."""
-        theme_dir = tmp_path / "themes" / "default"
-        sounds_dir = theme_dir / "sounds"
-        sounds_dir.mkdir(parents=True)
-        (sounds_dir / "greeting.aiff").write_text("sound")
-
-        manifest = {"states": {"greeting": {"sound": None}}}
-        handler.PLUGIN_ROOT = tmp_path
-
-        result = handler.find_sound_file("greeting", "default", manifest)
-        assert result.name == "greeting.aiff"
-
-    def test_find_sound_multiple_formats(self, tmp_path, handler):
-        """Finds sound in any supported format."""
-        theme_dir = tmp_path / "themes" / "default"
-        sounds_dir = theme_dir / "sounds"
-        sounds_dir.mkdir(parents=True)
-
-        handler.PLUGIN_ROOT = tmp_path
-
-        # Test each supported format
-        for ext in [".wav", ".mp3", ".m4a", ".aiff", ".caf"]:
-            sound_file = sounds_dir / f"test{ext}"
-            sound_file.write_text("sound")
-
-            manifest = {}
-            result = handler.find_sound_file("test", "default", manifest)
-            assert result is not None
-            assert result.suffix == ext
-
-            sound_file.unlink()
-
-    def test_find_sound_not_found(self, tmp_path, handler):
-        """Returns None when no sound file exists."""
-        theme_dir = tmp_path / "themes" / "default"
-        sounds_dir = theme_dir / "sounds"
-        sounds_dir.mkdir(parents=True)
-
-        handler.PLUGIN_ROOT = tmp_path
-        manifest = {}
-
-        result = handler.find_sound_file("nonexistent", "default", manifest)
-        assert result is None
+        result = handler.send_sound_to_overlay("greeting")
+        assert result is False
 
 
 class TestGetTerminalInfo:
@@ -588,3 +502,596 @@ class TestGetTerminalInfo:
         result = handler.get_terminal_info()
         assert result["pid"] == 11111
         mock_run.assert_not_called()
+
+
+# =============================================================================
+# PHASE 1: MAIN FUNCTION TESTS
+# =============================================================================
+
+
+class TestMainFunction:
+    """Tests for main() function - the entry point for all hook events."""
+
+    def test_main_session_start_runs_setup_and_starts_overlay(
+        self, tmp_path, mocker, handler
+    ):
+        """SessionStart checks setup and starts overlay."""
+        # Setup environment
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        setup_ok = fx_dir / "setup_ok"
+        setup_ok.write_text("ok")
+
+        scripts_dir = tmp_path / "scripts"
+        scripts_dir.mkdir()
+        (scripts_dir / "overlay.py").write_text("# overlay")
+
+        handler.FX_DIR = fx_dir
+        handler.SETUP_OK_FILE = setup_ok
+        handler.PLUGIN_ROOT = tmp_path
+
+        # Mock stdin with SessionStart event
+        data = json.dumps({"hook_event_name": "SessionStart"})
+        mocker.patch("sys.stdin.read", return_value=data)
+
+        # Mock session ID and overlay functions
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
+        mocker.patch.object(handler, "is_overlay_running", return_value=False)
+        mock_start = mocker.patch.object(handler, "start_overlay")
+        mocker.patch.object(
+            handler, "send_state_to_overlay", return_value=False
+        )
+        mocker.patch.object(handler, "send_sound_to_overlay")
+        mocker.patch.object(handler, "cleanup_legacy_files")
+        mocker.patch.object(handler, "check_setup", return_value=True)
+
+        # Run main (will call sys.exit)
+        with pytest.raises(SystemExit) as exc_info:
+            handler.main()
+
+        assert exc_info.value.code == 0
+        mock_start.assert_called_once()
+
+    def test_main_session_end_plays_farewell_and_shuts_down(
+        self, tmp_path, mocker, handler
+    ):
+        """SessionEnd plays farewell sound and shuts down overlay."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        setup_ok = fx_dir / "setup_ok"
+        setup_ok.write_text("ok")
+
+        handler.FX_DIR = fx_dir
+        handler.SETUP_OK_FILE = setup_ok
+        handler.PLUGIN_ROOT = tmp_path
+
+        data = json.dumps({"hook_event_name": "SessionEnd"})
+        mocker.patch("sys.stdin.read", return_value=data)
+
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
+        mock_send = mocker.patch.object(handler, "send_state_to_overlay")
+        mock_sound = mocker.patch.object(handler, "send_sound_to_overlay")
+        mock_shutdown = mocker.patch.object(handler, "shutdown_overlay")
+        mock_orphans = mocker.patch.object(handler, "kill_orphaned_overlays")
+        mocker.patch("time.sleep")
+
+        with pytest.raises(SystemExit) as exc_info:
+            handler.main()
+
+        assert exc_info.value.code == 0
+        mock_send.assert_called_once_with("farewell", None)
+        mock_sound.assert_called_once_with("farewell")
+        mock_shutdown.assert_called_once()
+        mock_orphans.assert_called_once()
+
+    def test_main_pre_tool_use_sends_working_state(
+        self, tmp_path, mocker, handler
+    ):
+        """PreToolUse sends 'working' state to overlay."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        setup_ok = fx_dir / "setup_ok"
+        setup_ok.write_text("ok")
+
+        handler.FX_DIR = fx_dir
+        handler.SETUP_OK_FILE = setup_ok
+        handler.PLUGIN_ROOT = tmp_path
+
+        data = json.dumps({
+            "hook_event_name": "PreToolUse", "tool_name": "Read"
+        })
+        mocker.patch("sys.stdin.read", return_value=data)
+
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
+        mock_send = mocker.patch.object(
+            handler, "send_state_to_overlay", return_value=True
+        )
+        mocker.patch.object(handler, "send_sound_to_overlay")
+
+        with pytest.raises(SystemExit):
+            handler.main()
+
+        mock_send.assert_called_with("working", "Read")
+
+    def test_main_post_tool_use_success_sends_success_state(
+        self, tmp_path, mocker, handler
+    ):
+        """PostToolUse with success sends 'success' state."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        setup_ok = fx_dir / "setup_ok"
+        setup_ok.write_text("ok")
+
+        handler.FX_DIR = fx_dir
+        handler.SETUP_OK_FILE = setup_ok
+        handler.PLUGIN_ROOT = tmp_path
+
+        data = json.dumps({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Read",
+            "tool_result": {"output": "file contents"}
+        })
+        mocker.patch("sys.stdin.read", return_value=data)
+
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
+        mock_send = mocker.patch.object(
+            handler, "send_state_to_overlay", return_value=True
+        )
+        mocker.patch.object(handler, "send_sound_to_overlay")
+
+        with pytest.raises(SystemExit):
+            handler.main()
+
+        mock_send.assert_called_with("success", "Read")
+
+    def test_main_post_tool_use_error_sends_error_state(
+        self, tmp_path, mocker, handler
+    ):
+        """PostToolUse with error sends 'error' state."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        setup_ok = fx_dir / "setup_ok"
+        setup_ok.write_text("ok")
+
+        handler.FX_DIR = fx_dir
+        handler.SETUP_OK_FILE = setup_ok
+        handler.PLUGIN_ROOT = tmp_path
+
+        data = json.dumps({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Read",
+            "tool_result": {"error": True, "output": "Error: file not found"}
+        })
+        mocker.patch("sys.stdin.read", return_value=data)
+
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
+        mock_send = mocker.patch.object(
+            handler, "send_state_to_overlay", return_value=True
+        )
+        mocker.patch.object(handler, "send_sound_to_overlay")
+
+        with pytest.raises(SystemExit):
+            handler.main()
+
+        mock_send.assert_called_with("error", "Read")
+
+    def test_main_stop_sends_celebrating_state(
+        self, tmp_path, mocker, handler
+    ):
+        """Stop event sends 'celebrating' state."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        setup_ok = fx_dir / "setup_ok"
+        setup_ok.write_text("ok")
+
+        handler.FX_DIR = fx_dir
+        handler.SETUP_OK_FILE = setup_ok
+        handler.PLUGIN_ROOT = tmp_path
+
+        data = json.dumps({"hook_event_name": "Stop"})
+        mocker.patch("sys.stdin.read", return_value=data)
+
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
+        mock_send = mocker.patch.object(
+            handler, "send_state_to_overlay", return_value=True
+        )
+        mocker.patch.object(handler, "send_sound_to_overlay")
+
+        with pytest.raises(SystemExit):
+            handler.main()
+
+        mock_send.assert_called_with("celebrating", None)
+
+    def test_main_change_character_cli_command(self, mocker, handler):
+        """CLI change-character command works."""
+        mocker.patch.object(
+            handler, "change_character_folder",
+            return_value={"status": "ok", "folder": "characters2"}
+        )
+        mocker.patch.object(
+            sys, "argv",
+            ["hook-handler.py", "change-character", "characters2"]
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            handler.main()
+
+        assert exc_info.value.code == 0
+
+    def test_main_overlay_disabled_skips_overlay_operations(
+        self, tmp_path, mocker, handler
+    ):
+        """When overlay disabled, plays sounds but doesn't start overlay."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        setup_ok = fx_dir / "setup_ok"
+        setup_ok.write_text("ok")
+
+        settings_file = tmp_path / "settings-fx.json"
+        settings_file.write_text(json.dumps({
+            "overlay": {"enabled": False},
+            "audio": {"enabled": True}
+        }))
+
+        handler.FX_DIR = fx_dir
+        handler.SETUP_OK_FILE = setup_ok
+        handler.PLUGIN_ROOT = tmp_path
+
+        data = json.dumps({
+            "hook_event_name": "PreToolUse", "tool_name": "Bash"
+        })
+        mocker.patch("sys.stdin.read", return_value=data)
+
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
+        mocker.patch.object(
+            handler, "send_state_to_overlay", return_value=False
+        )
+        mock_start = mocker.patch.object(handler, "start_overlay")
+        mocker.patch.object(handler, "is_overlay_running", return_value=False)
+        mock_sound = mocker.patch.object(handler, "send_sound_to_overlay")
+
+        with pytest.raises(SystemExit):
+            handler.main()
+
+        # Should not start overlay when disabled
+        mock_start.assert_not_called()
+        # But should still play sounds
+        mock_sound.assert_called_once()
+
+    def test_main_empty_event_exits_immediately(self, mocker, handler):
+        """Empty event name exits without action."""
+        mocker.patch("sys.stdin.read", return_value="{}")
+
+        with pytest.raises(SystemExit) as exc_info:
+            handler.main()
+
+        assert exc_info.value.code == 0
+
+
+# =============================================================================
+# PROCESS MANAGEMENT TESTS
+# =============================================================================
+
+
+class TestCleanupSessionFiles:
+    """Tests for _cleanup_session_files() function."""
+
+    def test_cleanup_removes_socket_and_pid(self, tmp_path, handler):
+        """Removes both socket and PID files."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        socket_file = fx_dir / "sock-12345.sock"
+        pid_file = fx_dir / "pid-12345.txt"
+        socket_file.write_text("")
+        pid_file.write_text("99999")
+
+        handler.FX_DIR = fx_dir
+
+        handler._cleanup_session_files(12345)
+
+        assert not socket_file.exists()
+        assert not pid_file.exists()
+
+    def test_cleanup_handles_missing_socket(self, tmp_path, handler):
+        """Handles missing socket file gracefully."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        pid_file = fx_dir / "pid-12345.txt"
+        pid_file.write_text("99999")
+
+        handler.FX_DIR = fx_dir
+
+        # Should not raise
+        handler._cleanup_session_files(12345)
+        assert not pid_file.exists()
+
+    def test_cleanup_handles_missing_pid(self, tmp_path, handler):
+        """Handles missing PID file gracefully."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        socket_file = fx_dir / "sock-12345.sock"
+        socket_file.write_text("")
+
+        handler.FX_DIR = fx_dir
+
+        # Should not raise
+        handler._cleanup_session_files(12345)
+        assert not socket_file.exists()
+
+    def test_cleanup_handles_permission_error(self, tmp_path, mocker, handler):
+        """Handles permission error gracefully."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        socket_file = fx_dir / "sock-12345.sock"
+        socket_file.write_text("")
+
+        handler.FX_DIR = fx_dir
+
+        # Mock unlink to raise PermissionError
+        mocker.patch.object(Path, "unlink", side_effect=PermissionError)
+
+        # Should not raise
+        handler._cleanup_session_files(12345)
+
+
+class TestKillOrphanedOverlays:
+    """Tests for kill_orphaned_overlays() function."""
+
+    def test_kills_processes_without_pid_files(
+        self, tmp_path, mocker, handler
+    ):
+        """Kills overlay processes that don't have PID files."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+
+        handler.FX_DIR = fx_dir
+
+        # pgrep returns PIDs 111, 222, 333
+        mock_run = mocker.patch("subprocess.run")
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "111\n222\n333"
+
+        mock_kill = mocker.patch("os.kill")
+
+        handler.kill_orphaned_overlays()
+
+        # All 3 should be killed (no PID files exist)
+        assert mock_kill.call_count == 3
+
+    def test_preserves_valid_sessions(self, tmp_path, mocker, handler):
+        """Doesn't kill overlays that have valid PID files."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+
+        # Create PID file for process 222
+        pid_file = fx_dir / "pid-99999.txt"
+        pid_file.write_text("222")
+
+        handler.FX_DIR = fx_dir
+
+        mock_run = mocker.patch("subprocess.run")
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "111\n222\n333"
+
+        mock_kill = mocker.patch("os.kill")
+
+        handler.kill_orphaned_overlays()
+
+        # Only 111 and 333 should be killed (222 has a PID file)
+        assert mock_kill.call_count == 2
+        killed_pids = [call[0][0] for call in mock_kill.call_args_list]
+        assert 222 not in killed_pids
+        assert 111 in killed_pids
+        assert 333 in killed_pids
+
+    def test_handles_pgrep_failure(self, mocker, handler):
+        """Handles pgrep returning no results."""
+        mock_run = mocker.patch("subprocess.run")
+        mock_run.return_value.returncode = 1
+        mock_run.return_value.stdout = ""
+
+        mock_kill = mocker.patch("os.kill")
+
+        # Should not raise
+        handler.kill_orphaned_overlays()
+        mock_kill.assert_not_called()
+
+    def test_handles_kill_exception(self, tmp_path, mocker, handler):
+        """Handles os.kill exceptions gracefully."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        handler.FX_DIR = fx_dir
+
+        mock_run = mocker.patch("subprocess.run")
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "111"
+
+        mocker.patch("os.kill", side_effect=ProcessLookupError)
+
+        # Should not raise
+        handler.kill_orphaned_overlays()
+
+
+class TestEnhancedShutdownOverlay:
+    """Additional tests for shutdown_overlay() with fallback behavior."""
+
+    def test_shutdown_sends_socket_command_successfully(
+        self, tmp_path, mocker, handler
+    ):
+        """Successfully shuts down via socket."""
+        import socket as sock_mod
+
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        socket_file = fx_dir / "sock-12345.sock"
+        socket_file.write_text("")
+
+        handler.FX_DIR = fx_dir
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
+
+        mock_socket = MagicMock()
+        mock_socket.recv.return_value = b'{"status": "ok"}'
+        mocker.patch.object(sock_mod, "socket", return_value=mock_socket)
+
+        handler.shutdown_overlay()
+
+        mock_socket.connect.assert_called_once()
+        mock_socket.sendall.assert_called_once()
+
+    def test_shutdown_falls_back_to_sigterm_on_socket_failure(
+        self, tmp_path, mocker, handler
+    ):
+        """Falls back to SIGTERM when socket fails."""
+        import socket as sock_mod
+
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        socket_file = fx_dir / "sock-12345.sock"
+        socket_file.write_text("")
+        pid_file = fx_dir / "pid-12345.txt"
+        pid_file.write_text("99999")
+
+        handler.FX_DIR = fx_dir
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
+
+        # Socket fails
+        mock_socket = MagicMock()
+        mock_socket.connect.side_effect = ConnectionRefusedError()
+        mocker.patch.object(sock_mod, "socket", return_value=mock_socket)
+
+        # Mock os.kill - first call succeeds, second raises (process dead)
+        mock_kill = mocker.patch("os.kill")
+        mock_kill.side_effect = [None, ProcessLookupError()]
+
+        mocker.patch("time.sleep")
+
+        handler.shutdown_overlay()
+
+        # Should have tried SIGTERM
+        import signal
+        mock_kill.assert_any_call(99999, signal.SIGTERM)
+
+    def test_shutdown_escalates_to_sigkill_if_process_alive(
+        self, tmp_path, mocker, handler
+    ):
+        """Escalates to SIGKILL if process still alive after SIGTERM."""
+
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        pid_file = fx_dir / "pid-12345.txt"
+        pid_file.write_text("99999")
+
+        handler.FX_DIR = fx_dir
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
+
+        # No socket file
+        mock_kill = mocker.patch("os.kill")
+        # Process alive after SIGTERM (kill(pid, 0) succeeds)
+        mock_kill.side_effect = [None, None, None]
+
+        mocker.patch("time.sleep")
+
+        handler.shutdown_overlay()
+
+        # Should call: SIGTERM, check alive (0), SIGKILL
+        assert mock_kill.call_count >= 2
+
+    def test_shutdown_cleans_up_files_regardless_of_method(
+        self, tmp_path, mocker, handler
+    ):
+        """Always cleans up files even if shutdown fails."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        socket_file = fx_dir / "sock-12345.sock"
+        socket_file.write_text("")
+        pid_file = fx_dir / "pid-12345.txt"
+        pid_file.write_text("99999")
+
+        handler.FX_DIR = fx_dir
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
+
+        # Socket fails, kill fails with expected exceptions
+        import socket as sock_mod
+        mock_socket = MagicMock()
+        mock_socket.connect.side_effect = ConnectionRefusedError()
+        mocker.patch.object(sock_mod, "socket", return_value=mock_socket)
+        mocker.patch("os.kill", side_effect=PermissionError("kill error"))
+
+        handler.shutdown_overlay()
+
+        # Files should be cleaned up regardless
+        assert not socket_file.exists()
+        assert not pid_file.exists()
+
+
+class TestChangeCharacterFolder:
+    """Tests for change_character_folder() function."""
+
+    def test_change_character_folder_success(self, tmp_path, mocker, handler):
+        """Successfully changes character folder."""
+        import socket as sock_mod
+
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        socket_file = fx_dir / "sock-12345.sock"
+        socket_file.write_text("")
+
+        handler.FX_DIR = fx_dir
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
+
+        mock_socket = MagicMock()
+        response = b'{"status": "ok", "folder": "characters2"}'
+        mock_socket.recv.return_value = response
+        mocker.patch.object(sock_mod, "socket", return_value=mock_socket)
+
+        result = handler.change_character_folder("characters2")
+
+        assert result["status"] == "ok"
+        assert result["folder"] == "characters2"
+
+    def test_change_character_folder_no_session(self, mocker, handler):
+        """Returns error when no session."""
+        mocker.patch.object(handler, "get_session_id", return_value=None)
+
+        result = handler.change_character_folder("characters2")
+
+        assert result["status"] == "error"
+        assert "no session" in result["message"]
+
+    def test_change_character_folder_overlay_not_running(
+        self, tmp_path, mocker, handler
+    ):
+        """Returns error when overlay not running."""
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        # No socket file
+
+        handler.FX_DIR = fx_dir
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
+
+        result = handler.change_character_folder("characters2")
+
+        assert result["status"] == "error"
+        assert "not running" in result["message"]
+
+    def test_change_character_folder_socket_error(
+        self, tmp_path, mocker, handler
+    ):
+        """Returns error on socket failure."""
+        import socket as sock_mod
+
+        fx_dir = tmp_path / ".claude-fx"
+        fx_dir.mkdir()
+        socket_file = fx_dir / "sock-12345.sock"
+        socket_file.write_text("")
+
+        handler.FX_DIR = fx_dir
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
+
+        mock_socket = MagicMock()
+        mock_socket.connect.side_effect = ConnectionRefusedError("refused")
+        mocker.patch.object(sock_mod, "socket", return_value=mock_socket)
+
+        result = handler.change_character_folder("characters2")
+
+        assert result["status"] == "error"

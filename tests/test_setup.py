@@ -292,17 +292,20 @@ class TestCheckAll:
 
     def test_check_all_missing_deps(self, mocker):
         """Detects missing dependencies."""
-        mocker.patch("platform.system", return_value="Darwin")
-        mocker.patch("platform.machine", return_value="arm64")
-        mocker.patch.object(sys, "version_info", (3, 11, 0))
-
         import setup
-        import importlib
-        importlib.reload(setup)
 
-        # Mock pillow as missing
+        # Mock all check functions to avoid PyObjC reload issues
+        mocker.patch.object(
+            setup, "check_python", return_value=(True, "3.11.0")
+        )
         mocker.patch.object(
             setup, "check_pillow", return_value=(False, "missing")
+        )
+        mocker.patch.object(
+            setup, "check_quartz", return_value=(True, "available")
+        )
+        mocker.patch.object(
+            setup, "check_cocoa", return_value=(True, "available")
         )
 
         all_ok, results, missing = setup.check_all()
@@ -394,7 +397,7 @@ class TestMainFunction:
         mocker.patch("platform.machine", return_value="arm64")
         mocker.patch.object(sys, "version_info", (3, 11, 0))
 
-        # Mock all deps as OK
+        # Mock all deps as OK (including Cocoa to avoid reload issues)
         mock_pil = MagicMock()
         mock_pil.__version__ = "10.0.0"
         mocker.patch.dict(sys.modules, {
@@ -402,6 +405,7 @@ class TestMainFunction:
             "PIL.Image": MagicMock(),
             "tkinter": MagicMock(),
             "Quartz": MagicMock(),
+            "Cocoa": MagicMock(),
         })
 
         # Create status file
