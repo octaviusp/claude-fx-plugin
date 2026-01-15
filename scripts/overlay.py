@@ -44,6 +44,7 @@ DEFAULT_OFFSET_X = 20
 DEFAULT_OFFSET_Y = 40
 
 # State durations (None = permanent, number = seconds before returning to idle)
+# 'farewell' is special - triggers shutdown after duration
 STATE_DURATIONS = {
     'idle': None,
     'greeting': 3.0,
@@ -52,6 +53,7 @@ STATE_DURATIONS = {
     'error': 3.0,
     'celebrating': 3.0,
     'sleeping': None,
+    'farewell': 3.0,  # Shows greeting then exits
 }
 
 
@@ -294,7 +296,9 @@ class Overlay:
         self.current_state = state
 
         states = self.manifest.get('states', {})
-        state_config = states.get(state, states.get('idle', {}))
+        # Use greeting image for farewell (wave goodbye)
+        lookup_state = 'greeting' if state == 'farewell' else state
+        state_config = states.get(lookup_state, states.get('idle', {}))
         animation = state_config.get('animation', '')
 
         if animation:
@@ -357,10 +361,38 @@ class Overlay:
             )
 
     def returnToIdle_(self, timer):
-        """Auto-transition back to idle state."""
+        """Auto-transition back to idle state or shutdown if farewell."""
         self.pending_idle_timer = None
-        if self.current_state not in ['idle', 'working', 'sleeping']:
+        if self.current_state == 'farewell':
+            self.shutdown()
+        elif self.current_state not in ['idle', 'working', 'sleeping']:
             self.change_state('idle')
+
+    def shutdown(self):
+        """Clean shutdown - fade out and exit."""
+        self.fadeOut()
+        # Schedule actual exit after fade completes
+        timer_method = 'scheduledTimerWithTimeInterval_' \
+            'target_selector_userInfo_repeats_'
+        getattr(NSTimer, timer_method)(
+            0.5, self, 'exitApp:', None, False
+        )
+
+    def exitApp_(self, timer):
+        """Exit the application cleanly."""
+        # Stop the poll timer
+        if self.timer:
+            self.timer.invalidate()
+            self.timer = None
+        # Cancel any pending timers
+        if self.pending_idle_timer:
+            self.pending_idle_timer.invalidate()
+            self.pending_idle_timer = None
+        # Clean up PID file
+        if PID_FILE.exists():
+            PID_FILE.unlink()
+        # Terminate
+        self.app.terminate_(None)
 
     def resize_window(self):
         """Resize window and image views to current size."""

@@ -147,6 +147,7 @@ def map_event_to_state(event: str, is_error: bool = False) -> str:
         'PreToolUse': 'working',
         'PostToolUse': 'success' if not is_error else 'error',
         'Stop': 'celebrating',
+        'SessionEnd': 'farewell',
         'Notification': 'idle',
     }
     return mapping.get(event, 'idle')
