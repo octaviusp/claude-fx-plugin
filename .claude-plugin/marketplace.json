@@ -13,7 +13,7 @@
       "version": "1.0.0",
       "category": "productivity",
       "source": {
-        "source": "url",
+        "type": "git",
         "url": "https://github.com/octaviusp/claude-fx-plugin.git"
       }
     }
