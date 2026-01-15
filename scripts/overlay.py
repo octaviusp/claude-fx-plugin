@@ -218,6 +218,7 @@ class Overlay:
 
         # State tracking
         self.current_state = 'idle'
+        self.last_file_state = None  # Track what we last read from file
         self.pending_idle_timer = None
         self.load_state_image('idle', crossfade=False)
 
@@ -447,8 +448,10 @@ class Overlay:
                         self.last_terminal_pos = current_pos
                         self.update_position(current_pos)
 
-                # Update state if visible and changed
-                if self.is_visible and new_state != self.current_state:
+                # Update state only if FILE state changed (not internal state)
+                # This prevents re-triggering after temporal auto-transition
+                if self.is_visible and new_state != self.last_file_state:
+                    self.last_file_state = new_state
                     self.change_state(new_state)
         except Exception:
             pass
