@@ -5,7 +5,11 @@
   "scripts": {
     "generate-assets": "python3 scripts/generate-placeholders.py",
     "overlay": "python3 scripts/overlay.py",
-    "overlay:stop": "pkill -f 'python3.*overlay.py' || true"
+    "overlay:stop": "pkill -f 'python3.*overlay.py' || true",
+    "test": "python3 -m pytest tests/ -v",
+    "test:cov": "python3 -m pytest tests/ --cov=scripts --cov-report=html",
+    "test:quick": "python3 -m pytest tests/ --no-cov -q",
+    "lint": "python3 -m ruff check scripts/ tests/"
   },
   "engines": {
     "python": ">=3.9.0"

@@ -5,3 +5,9 @@ __pycache__/
 *.pyc
 .venv/
 *.egg-info/
+
+# Test artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+.ruff_cache/

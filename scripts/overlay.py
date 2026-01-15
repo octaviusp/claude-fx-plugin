@@ -624,10 +624,12 @@ class Overlay(NSObject):
 
         # Animate crossfade
         NSAnimationContext.beginGrouping()
-        NSAnimationContext.currentContext().setDuration_(0.2)
-        self.image_view_front.animator().setAlphaValue_(0.0)
-        self.image_view_back.animator().setAlphaValue_(1.0)
-        NSAnimationContext.endGrouping()
+        try:
+            NSAnimationContext.currentContext().setDuration_(0.2)
+            self.image_view_front.animator().setAlphaValue_(0.0)
+            self.image_view_back.animator().setAlphaValue_(1.0)
+        finally:
+            NSAnimationContext.endGrouping()
 
         # Swap references after animation
         timer_method = 'scheduledTimerWithTimeInterval_' \
@@ -829,9 +831,11 @@ class Overlay(NSObject):
         self.window.orderFront_(None)
         if self.fade_animation:
             NSAnimationContext.beginGrouping()
-            NSAnimationContext.currentContext().setDuration_(0.3)
-            self.window.animator().setAlphaValue_(1.0)
-            NSAnimationContext.endGrouping()
+            try:
+                NSAnimationContext.currentContext().setDuration_(0.3)
+                self.window.animator().setAlphaValue_(1.0)
+            finally:
+                NSAnimationContext.endGrouping()
         else:
             self.window.setAlphaValue_(1.0)
         self.is_visible = True
@@ -842,9 +846,11 @@ class Overlay(NSObject):
             return
         if self.fade_animation:
             NSAnimationContext.beginGrouping()
-            NSAnimationContext.currentContext().setDuration_(0.3)
-            self.window.animator().setAlphaValue_(0.0)
-            NSAnimationContext.endGrouping()
+            try:
+                NSAnimationContext.currentContext().setDuration_(0.3)
+                self.window.animator().setAlphaValue_(0.0)
+            finally:
+                NSAnimationContext.endGrouping()
             # Schedule orderOut after animation
             timer_method = 'scheduledTimerWithTimeInterval_' \
                 'target_selector_userInfo_repeats_'

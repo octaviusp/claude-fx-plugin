@@ -9,10 +9,11 @@ import os
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
-# Session window ID cache (set once per hook invocation)
-_session_window_id = None
+# Session ID cache (terminal PID, set once per hook invocation)
+_session_id = None
 
 # Paths
 HOME = Path.home()
@@ -27,14 +28,14 @@ def get_socket_path(session_id: int) -> Path:
 
 def get_session_id() -> int | None:
     """Get session ID (terminal PID only - for singleton lock)."""
-    global _session_window_id
-    if _session_window_id is None:
+    global _session_id
+    if _session_id is None:
         info = get_terminal_info()
         if info:
             # ALWAYS use PID for session ID (lock file)
             # Window ID is only for visibility tracking
-            _session_window_id = info.get('pid')
-    return _session_window_id
+            _session_id = info.get('pid')
+    return _session_id
 
 
 PLUGIN_ROOT = Path(os.environ.get(
@@ -295,14 +296,14 @@ def cleanup_legacy_files():
 
 def start_overlay():
     """Start session-specific overlay process in background."""
-    window_id = get_session_id()
-    if not window_id:
+    session_id = get_session_id()
+    if not session_id:
         return
     overlay_script = PLUGIN_ROOT / 'scripts' / 'overlay.py'
     if overlay_script.exists():
         env = os.environ.copy()
         env['CLAUDE_FX_ROOT'] = str(PLUGIN_ROOT)
-        env['CLAUDE_FX_SESSION'] = str(window_id)  # Pass session ID
+        env['CLAUDE_FX_SESSION'] = str(session_id)  # Pass session ID
         subprocess.Popen(
             [sys.executable, str(overlay_script)],
             env=env,
@@ -415,12 +416,10 @@ def main():
     state = map_event_to_state(event, is_error)
     tool = data.get('tool_name')
 
-    # Handle SessionEnd specially - show farewell then shutdown overlay
+    # Handle SessionEnd - show farewell and shutdown overlay (non-blocking)
     if event == 'SessionEnd':
         send_state_to_overlay(state, tool)
-        play_sound('greeting', settings)  # Play greeting sound for goodbye
-        import time
-        time.sleep(3.5)  # Wait for animation
+        play_sound('farewell', settings)
         shutdown_overlay()
         sys.exit(0)
 
@@ -431,7 +430,6 @@ def main():
     if overlay_enabled and not sent and not is_overlay_running():
         start_overlay()
         # Give overlay time to start, then send state again
-        import time
         time.sleep(0.3)
         send_state_to_overlay(state, tool)
 
