@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 # Session ID cache (terminal PID, set once per hook invocation)
 _session_id = None
@@ -27,7 +28,7 @@ def get_socket_path(session_id: int) -> Path:
     return FX_DIR / f'sock-{session_id}.sock'
 
 
-def get_session_id() -> int | None:
+def get_session_id() -> Optional[int]:
     """Get session ID (shell PID for isolation)."""
     global _session_id
     if _session_id is None:
@@ -51,7 +52,7 @@ TERMINAL_NAMES = {
 _terminal_info = None
 
 
-def get_terminal_info() -> dict | None:
+def get_terminal_info() -> Optional[dict]:
     """Get terminal info for the shell running Claude Code.
 
     Returns dict with:

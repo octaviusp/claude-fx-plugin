@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Optional
 
 from PIL import Image, ImageFilter
 
@@ -240,7 +241,7 @@ def load_messages(plugin_root: Path) -> dict:
 
 def find_sound_file(
     state: str, theme_path: Path, manifest: dict
-) -> Path | None:
+) -> Optional[Path]:
     """
     Find sound file for state. Priority:
     1. Manifest-specified path
@@ -397,7 +398,7 @@ def is_our_window_frontmost(terminal_pid: int, window_id: int) -> bool:
         return True  # Error = show (permissive when terminal active)
 
 
-def get_terminal_window_position(window_id: int) -> dict | None:
+def get_terminal_window_position(window_id: int) -> Optional[dict]:
     """Get position of specific terminal window by ID."""
     if not window_id:
         return None
@@ -1551,7 +1552,7 @@ class Overlay(NSObject):
         self.image_view_front.setFrame_(view_rect)
         self.image_view_back.setFrame_(view_rect)
 
-    def get_pid_from_window_id(self, window_id: int) -> int | None:
+    def get_pid_from_window_id(self, window_id: int) -> Optional[int]:
         """Get the owner PID of a window by its ID."""
         try:
             windows = CGWindowListCopyWindowInfo(
