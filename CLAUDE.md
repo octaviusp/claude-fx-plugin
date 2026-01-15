@@ -8,6 +8,9 @@ claude-fx-plugin is a Claude Code plugin that displays a persistent animated mas
 
 **Key Features**:
 - True transparency using PyObjC native macOS NSWindow
+- **Immersion system** - breathing, sway, cursor tracking, transition animations
+- **Speech bubbles** - customizable styled messages per state
+- **Emotion overlays** - programmatic effects (sparkles, sweat drops, zzz)
 - Floating animation with glowing aura effect
 - Bottom gradient fade for text readability
 - Multi-instance support (multiple terminals simultaneously)
@@ -23,7 +26,7 @@ Claude Code Hooks → hook-handler.py → Unix Socket → overlay.py (PyObjC)
 
 1. **SessionStart** triggers setup check (installs deps if needed)
 2. **hook-handler.py** maps hook events to states, sends via Unix socket
-3. **overlay.py** receives state updates via socket, displays transparent PNG overlay
+3. **overlay.py** receives state updates via socket, displays transparent PNG overlay with immersion effects
 
 **IPC**: Uses Unix domain sockets (`~/.claude-fx/sock-{SHELL_PID}.sock`) for fast, reliable inter-process communication. Each shell session gets its own socket for multi-instance support.
 
@@ -50,6 +53,7 @@ claude-fx-plugin/
 │       ├── characters/       # PNG images per state
 │       └── sounds/           # Audio files
 ├── settings-fx.json          # User configuration
+├── messages.json             # Speech bubble messages per state
 └── CLAUDE.md
 ```
 
@@ -65,6 +69,9 @@ claude-fx-plugin/
 - **Terminal-specific visibility** - only shows when the terminal that started Claude Code is active
 - **Fade animations** - smooth alpha transitions when showing/hiding
 - **Parent process monitoring** - auto-exits when terminal closes
+- **Immersion system** - breathing, sway, cursor influence, transitions
+- **Speech bubbles** - customizable styled messages
+- **Emotion overlays** - programmatic visual effects
 - **Floating animation** - subtle vertical bobbing motion
 - **Aura glow effect** - pulsing shadow around character
 - **Bottom gradient** - fades image bottom for text readability
@@ -110,10 +117,35 @@ claude-fx-plugin/
     "enabled": true,
     "volume": 0.5
   },
-  "theme": "default"
+  "theme": "default",
+  "immersion": {
+    "breathing": true,
+    "sway": true,
+    "cursorInfluence": true,
+    "cursorInfluenceStrength": 0.5,
+    "transitions": true
+  },
+  "speechBubble": {
+    "enabled": true,
+    "backgroundColor": "#1a1a2e",
+    "borderColor": "#4a9eff",
+    "borderWidth": 2,
+    "borderRadius": 8,
+    "fontFamily": "SF Mono",
+    "fontSize": 13,
+    "fontColor": "#ffffff",
+    "padding": 10,
+    "displayDuration": 3.0
+  },
+  "emotionOverlays": {
+    "enabled": true
+  }
 }
 ```
 
+### Settings Reference
+
+#### Overlay Settings
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `overlay.enabled` | bool | true | Show/hide overlay |
@@ -126,9 +158,40 @@ claude-fx-plugin/
 | `overlay.fadeAnimation` | bool | true | Smooth show/hide transitions |
 | `overlay.bottomGradient.enabled` | bool | true | Fade bottom of image |
 | `overlay.bottomGradient.percentage` | float | 0.8 | Portion to fade (0.0-1.0) |
+
+#### Audio Settings
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
 | `audio.enabled` | bool | true | Enable sound effects |
 | `audio.volume` | float | 0.5 | Volume level (0.0-1.0) |
-| `theme` | string | "default" | Theme folder name |
+
+#### Immersion Settings
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `immersion.breathing` | bool | true | Subtle scale pulse animation |
+| `immersion.sway` | bool | true | Gentle rotation and drift |
+| `immersion.cursorInfluence` | bool | true | Character tilts toward cursor |
+| `immersion.cursorInfluenceStrength` | float | 0.5 | How much cursor affects tilt (0.0-1.0) |
+| `immersion.transitions` | bool | true | State change animations |
+
+#### Speech Bubble Settings
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `speechBubble.enabled` | bool | true | Show speech bubbles |
+| `speechBubble.backgroundColor` | string | "#1a1a2e" | Bubble background color |
+| `speechBubble.borderColor` | string | "#4a9eff" | Bubble border color |
+| `speechBubble.borderWidth` | int | 2 | Border thickness in pixels |
+| `speechBubble.borderRadius` | int | 8 | Corner radius in pixels |
+| `speechBubble.fontFamily` | string | "SF Mono" | Font family name |
+| `speechBubble.fontSize` | int | 13 | Font size in points |
+| `speechBubble.fontColor` | string | "#ffffff" | Text color |
+| `speechBubble.padding` | int | 10 | Inner padding in pixels |
+| `speechBubble.displayDuration` | float | 3.0 | Seconds to show bubble |
+
+#### Emotion Overlay Settings
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `emotionOverlays.enabled` | bool | true | Show emotion effects |
 
 ## State Machine
 
@@ -161,6 +224,26 @@ FLOAT_AMPLITUDE = 3.0   # pixels of vertical movement
 FLOAT_PERIOD = 2.5      # seconds for full oscillation cycle
 ```
 
+### Breathing Effect
+```python
+BREATH_INTENSITY = 0.008  # 0.8% scale change
+BREATH_PERIOD = 3.5       # seconds for full breath cycle
+```
+
+### Sway Effect
+```python
+SWAY_ANGLE = 1.5    # degrees max rotation
+SWAY_PERIOD = 4.0   # seconds for full sway cycle
+SWAY_X = 2.0        # pixels horizontal drift
+```
+
+### Cursor Influence
+```python
+CURSOR_TILT_MAX = 3.0    # degrees max tilt toward cursor
+CURSOR_SHIFT_MAX = 5.0   # pixels max shift toward cursor
+CURSOR_FALLOFF = 300.0   # distance for effect falloff
+```
+
 ### Aura Glow
 ```python
 AURA_COLOR = (0.4, 0.55, 1.0, 1.0)  # Soft blue (R, G, B, A)
@@ -170,8 +253,45 @@ AURA_PERIOD = 1.8       # seconds for pulse cycle
 AURA_OPACITY = 0.5
 ```
 
+### State Transitions
+| State | Animation | Parameters |
+|-------|-----------|------------|
+| greeting | scale_pop | scale: 1.08, duration: 0.25s |
+| working | scale_pop | scale: 1.05, duration: 0.2s |
+| success | bounce | height: 15px, duration: 0.4s |
+| error | shake | intensity: 8px, cycles: 3, duration: 0.3s |
+| celebrating | bounce | height: 20px, duration: 0.5s |
+| farewell | scale_pop | scale: 1.05, duration: 0.2s |
+
+### Emotion Overlays
+| State | Overlays | Description |
+|-------|----------|-------------|
+| error | sweat_drop | Animated falling drop |
+| success | sparkle | Pulsing sparkles |
+| celebrating | sparkle, star | Sparkles + rotating star |
+| sleeping | zzz | Floating Z letters |
+| working | focus_lines | Radiating concentration lines |
+
 ### Bottom Gradient
 Applied via PIL before display. Multiplies alpha channel by a gradient that goes from 1.0 (full opacity) at `start_y` to 0.0 (transparent) at the bottom.
+
+## Speech Bubble System
+
+### messages.json
+```json
+{
+  "greeting": ["Ready when you are.", "Let's build something."],
+  "working": ["On it...", "Processing..."],
+  "success": ["Done.", "Got it.", "Clean."],
+  "error": ["Hmm, let me check.", "Something's off."],
+  "celebrating": ["Nice work!", "Victory!"],
+  "sleeping": ["Zzz...", "*yawn*"],
+  "farewell": ["See you!", "Bye for now."],
+  "idle": ["Need anything?", "I'm here."]
+}
+```
+
+Messages are randomly selected per state. Users can customize by editing `messages.json`.
 
 ## Multi-Instance Architecture
 
@@ -187,7 +307,7 @@ This allows multiple Claude Code sessions to run simultaneously with independent
 
 Required (auto-detected by setup.py):
 - **Python 3.9+** - Core runtime
-- **Pillow** - Image processing (gradient, resize)
+- **Pillow** - Image processing (gradient, resize, shadow)
 - **pyobjc-framework-Quartz** - Terminal detection + window positioning
 - **pyobjc-framework-Cocoa** - Native macOS UI (NSWindow)
 
@@ -223,6 +343,7 @@ Replace PNGs in `themes/default/characters/`:
 Requirements:
 - **PNG with transparent background** (RGBA)
 - Any size (scaled to maxHeight setting)
+- **No special assets needed** - immersion effects work on ANY static PNG
 
 ## Sound System
 
@@ -254,17 +375,30 @@ Sound discovery priority:
 | Linux | Not supported | Would need GTK/Qt port |
 | Windows | Not supported | - |
 
-## Recent Changes (v1.0.0)
+## Recent Changes (v2.0.0)
 
-- **Multi-instance support** - Run multiple Claude Code sessions with independent overlays
-- **Shell PID isolation** - Session ID uses shell PID (unique per window) instead of terminal app PID
-- **Bottom gradient fade** - Configurable alpha gradient at image bottom for text readability
-- **Floating animation** - Subtle vertical bobbing motion (3px amplitude, 2.5s period)
-- **Aura glow effect** - Pulsing blue shadow around character
-- **Responsive sizing** - Scale overlay with terminal height via heightRatio
-- **Sound system** - Multi-format audio with manifest-based or convention-based discovery
-- **Bulletproof visibility** - NSWorkspace notifications + validation timer + Space change detection
-- **Unix Socket IPC** - Zero-latency state updates via Unix domain sockets
-- **Parent process monitoring** - Overlay auto-exits when terminal closes
-- **Fade animations** - Smooth alpha transitions when showing/hiding
-- **Signal handlers** - Clean shutdown on SIGTERM, SIGINT, SIGHUP
+### Immersion System
+- **Breathing animation** - Subtle Y-axis scale pulse (0.8% intensity, 3.5s cycle)
+- **Sway animation** - Gentle rotation (±1.5°) and horizontal drift (±2px)
+- **Cursor influence** - Character tilts toward mouse cursor with distance falloff
+- **State transitions** - Bounce, shake, and scale pop animations on state change
+
+### Speech Bubbles
+- **Squared rectangles** with user-defined styling
+- Configurable background, border, font, colors, radius
+- Random message selection from pool per state
+- Auto-fade after configurable duration
+- Messages customizable via `messages.json`
+
+### Emotion Overlays
+- **Programmatically drawn** - works on ANY static PNG
+- sweat_drop (error), sparkles (success), zzz (sleeping), focus_lines (working)
+- Animated effects with phase-based motion
+
+### Previous (v1.0.0)
+- Multi-instance support via shell PID isolation
+- Bottom gradient fade for text readability
+- Floating animation with glowing aura
+- Unix Socket IPC for zero-latency updates
+- Responsive sizing with terminal height
+- Sound system with multi-format support
