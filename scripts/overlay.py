@@ -85,6 +85,7 @@ PLUGIN_ROOT = Path(os.environ.get(
 DEFAULT_MAX_HEIGHT = 350
 DEFAULT_OFFSET_X = 20
 DEFAULT_OFFSET_Y = 40
+DEFAULT_HEIGHT_RATIO = 0.5  # 50% of terminal height when responsive
 
 # State durations (None = permanent, number = seconds before returning to idle)
 # 'farewell' is special - triggers shutdown after duration
@@ -230,14 +231,27 @@ class Overlay:
         # Load settings
         self.settings = load_settings()
         overlay_cfg = self.settings.get('overlay', {})
-        self.max_height = overlay_cfg.get('maxHeight', DEFAULT_MAX_HEIGHT)
+        self.base_max_height = overlay_cfg.get('maxHeight', DEFAULT_MAX_HEIGHT)
+        self.max_height = self.base_max_height  # Current active max height
         self.offset_x = overlay_cfg.get('offsetX', DEFAULT_OFFSET_X)
         self.offset_y = overlay_cfg.get('offsetY', DEFAULT_OFFSET_Y)
+        self.responsive = overlay_cfg.get('responsive', True)
+        self.height_ratio = overlay_cfg.get(
+            'heightRatio', DEFAULT_HEIGHT_RATIO
+        )
 
         # Load manifest
         theme_name = self.settings.get('theme', 'default')
         self.theme_path = PLUGIN_ROOT / 'themes' / theme_name
         self.manifest = self.load_manifest()
+
+        # Get initial terminal position for responsive sizing
+        initial_pos = get_terminal_position()
+        if self.responsive and initial_pos:
+            self.max_height = self.calculate_responsive_height(
+                initial_pos['h']
+            )
+            self.last_terminal_pos = initial_pos
 
         # Calculate size from first image
         self.width = 200
@@ -345,6 +359,14 @@ class Overlay:
             y = screen_height - pos['y'] - self.offset_y - self.height
 
         return x, y
+
+    def calculate_responsive_height(self, terminal_height: int) -> int:
+        """Calculate max height based on terminal size."""
+        if not self.responsive or not terminal_height:
+            return self.base_max_height
+        # Use ratio of terminal height, but cap at base_max_height
+        responsive_h = int(terminal_height * self.height_ratio)
+        return min(responsive_h, self.base_max_height)
 
     def calculate_size(self, state: str):
         """Calculate image size maintaining aspect ratio."""
@@ -533,14 +555,31 @@ class Overlay:
                     elif not should_show and self.is_visible:
                         self.fadeOut()
 
-                # Track terminal position (follow window movement)
+                # Track terminal position and size (follow window)
                 if self.is_visible and self.terminal_window_id:
                     current_pos = get_terminal_window_position(
                         self.terminal_window_id
                     )
-                    if current_pos and current_pos != self.last_terminal_pos:
-                        self.last_terminal_pos = current_pos
-                        self.update_position(current_pos)
+                    if current_pos:
+                        # Check if terminal size changed (responsive resize)
+                        old_h = self.last_terminal_pos.get('h') if \
+                            self.last_terminal_pos else None
+                        if self.responsive and old_h != current_pos['h']:
+                            new_max = self.calculate_responsive_height(
+                                current_pos['h']
+                            )
+                            if new_max != self.max_height:
+                                self.max_height = new_max
+                                self.calculate_size(self.current_state)
+                                self.load_state_image(
+                                    self.current_state, crossfade=False
+                                )
+                                self.resize_window()
+
+                        # Update position if changed
+                        if current_pos != self.last_terminal_pos:
+                            self.last_terminal_pos = current_pos
+                            self.update_position(current_pos)
 
                 # Update state only if FILE state changed (not internal state)
                 # This prevents re-triggering after temporal auto-transition
