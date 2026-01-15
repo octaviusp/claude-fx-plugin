@@ -1,0 +1,20 @@
+{
+  "overlay": {
+    "enabled": true,
+    "size": 150,
+    "position": "terminal-right",
+    "offsetX": 20,
+    "offsetY": 40
+  },
+  "audio": {
+    "enabled": true,
+    "volume": 0.5
+  },
+  "theme": "default",
+  "states": {
+    "greeting": { "duration": 3.0 },
+    "success": { "duration": 2.0 },
+    "error": { "duration": 3.0 },
+    "celebrating": { "duration": 3.0 }
+  }
+}

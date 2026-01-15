@@ -1,13 +1,24 @@
 {
   "description": "Visual and audio feedback hooks for Claude Code events",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/hook-handler.py",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/fx-handler.js",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/hook-handler.py",
             "timeout": 5000
           }
         ]
@@ -19,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/fx-handler.js",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/hook-handler.py",
             "timeout": 5000
           }
         ]
@@ -30,18 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/fx-handler.js",
-            "timeout": 5000
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/fx-handler.js",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/hook-handler.py",
             "timeout": 5000
           }
         ]

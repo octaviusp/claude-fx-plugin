@@ -1,42 +1,35 @@
 {
   "name": "default",
-  "description": "Default minimal theme with subtle feedback",
-  "version": "1.0.0",
-  "effects": {
-    "PreToolUse": {
-      "message": "Working...",
-      "sound": "start.wav",
-      "animation": "working.gif"
+  "description": "Default theme with animated mascot",
+  "version": "2.0.0",
+  "states": {
+    "idle": {
+      "animation": "characters/idle.gif",
+      "sound": null
     },
-    "PreToolUse:Write": {
-      "message": "Writing file...",
-      "sound": "write.wav",
-      "animation": "writing.gif"
+    "greeting": {
+      "animation": "characters/greeting.gif",
+      "sound": "sounds/greeting.wav"
     },
-    "PreToolUse:Edit": {
-      "message": "Editing...",
-      "sound": "edit.wav",
-      "animation": "editing.gif"
+    "working": {
+      "animation": "characters/working.gif",
+      "sound": "sounds/working.wav"
     },
-    "PreToolUse:Bash": {
-      "message": "Running command...",
-      "sound": "bash.wav",
-      "animation": "terminal.gif"
+    "success": {
+      "animation": "characters/success.gif",
+      "sound": "sounds/success.wav"
     },
-    "PostToolUse": {
-      "message": "Done!",
-      "sound": "complete.wav",
-      "animation": "done.gif"
+    "error": {
+      "animation": "characters/error.gif",
+      "sound": "sounds/error.wav"
     },
-    "Stop": {
-      "message": "Task complete!",
-      "sound": "finish.wav",
-      "animation": "finish.gif"
+    "celebrating": {
+      "animation": "characters/celebrating.gif",
+      "sound": "sounds/celebration.wav"
     },
-    "Notification": {
-      "message": "Notification",
-      "sound": "notify.wav",
-      "animation": "notify.gif"
+    "sleeping": {
+      "animation": "characters/sleeping.gif",
+      "sound": null
     }
   }
 }

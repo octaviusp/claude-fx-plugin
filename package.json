@@ -1,24 +1,14 @@
 {
   "name": "claude-fx-plugin",
-  "version": "0.1.0",
-  "description": "Visual and audio feedback for Claude Code hooks",
-  "type": "module",
-  "main": "scripts/fx-handler.js",
+  "version": "0.2.0",
+  "description": "Visual and audio feedback for Claude Code hooks - persistent animated overlay",
   "scripts": {
-    "dev": "node --watch scripts/fx-handler.js",
-    "lint": "eslint scripts",
-    "test": "node --test 'tests/**/*.test.js'",
-    "test:single": "node --test"
-  },
-  "dependencies": {
-    "play-sound": "^1.1.6"
-  },
-  "devDependencies": {
-    "@eslint/js": "^9.39.2",
-    "eslint": "^9.0.0"
+    "generate-assets": "python3 scripts/generate-placeholders.py",
+    "overlay": "python3 scripts/overlay.py",
+    "overlay:stop": "pkill -f 'python3.*overlay.py' || true"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "python": ">=3.9.0"
   },
   "keywords": [
     "claude-code",
@@ -26,7 +16,9 @@
     "hooks",
     "fx",
     "visual",
-    "audio"
+    "audio",
+    "overlay",
+    "mascot"
   ],
   "license": "MIT"
 }
