@@ -1,10 +1,9 @@
 {
   "name": "claude-fx-plugin",
-  "description": "Visual and audio feedback for Claude Code hooks - displays animated overlays and plays sound effects in response to Claude's activity",
-  "version": "0.1.0",
+  "description": "Visual and audio feedback for Claude Code hooks - displays animated overlays and plays sound effects",
+  "version": "0.2.0",
   "author": {
     "name": "Octavio"
   },
-  "keywords": ["fx", "visual", "audio", "overlay", "animation", "hooks"],
-  "hooks": "hooks/hooks.json"
+  "keywords": ["fx", "visual", "audio", "overlay", "animation", "hooks"]
 }
