@@ -94,7 +94,6 @@ claude-fx-plugin/
     "responsive": true,
     "heightRatio": 1,
     "maxHeight": 750,
-    "position": "auto",
     "customX": null,
     "customY": null,
     "offsetX": 20,
@@ -120,7 +119,6 @@ claude-fx-plugin/
 | `overlay.responsive` | bool | true | Scale with terminal height |
 | `overlay.heightRatio` | float | 1.0 | Ratio of terminal height (0.0-1.0) |
 | `overlay.maxHeight` | int | 750 | Maximum image height in pixels |
-| `overlay.position` | string | "auto" | Position mode: "auto" or "custom" |
 | `overlay.customX/Y` | int | null | Fixed position coordinates |
 | `overlay.offsetX/Y` | int | 20/0 | Offset from terminal edge |
 | `overlay.showOnlyWhenTerminalActive` | bool | true | Hide when terminal loses focus |

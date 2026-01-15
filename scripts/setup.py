@@ -104,6 +104,19 @@ def check_quartz():
         return False, "not installed"
 
 
+def check_cocoa():
+    """Check if Cocoa (pyobjc) is available - macOS only."""
+    plat, _ = get_platform_info()
+    if plat != 'macos':
+        return True, "not needed"
+
+    try:
+        import Cocoa  # noqa: F401
+        return True, "available"
+    except ImportError:
+        return False, "not installed"
+
+
 def is_homebrew_python():
     """Check if running Homebrew-managed Python."""
     exe = sys.executable.lower()
@@ -131,6 +144,10 @@ def get_install_commands(missing, plat, python_version):
     if 'quartz' in missing and plat == 'macos':
         cmd = f"pip3 install pyobjc-framework-Quartz{pip_flags}"
         commands.append(("Quartz", cmd))
+
+    if 'cocoa' in missing and plat == 'macos':
+        cmd = f"pip3 install pyobjc-framework-Cocoa{pip_flags}"
+        commands.append(("Cocoa", cmd))
 
     return commands
 
@@ -163,6 +180,11 @@ def check_all():
     if not ok and plat == 'macos':
         missing.append('quartz')
 
+    ok, detail = check_cocoa()
+    results['cocoa'] = (ok, detail)
+    if not ok and plat == 'macos':
+        missing.append('cocoa')
+
     all_ok = len(missing) == 0
     return all_ok, results, missing
 
@@ -180,6 +202,8 @@ def print_results(results, missing):
     if plat == 'macos':
         print_status("pyobjc-framework-Quartz", results['quartz'][0],
                      results['quartz'][1])
+        print_status("pyobjc-framework-Cocoa", results['cocoa'][0],
+                     results['cocoa'][1])
 
     print()
 

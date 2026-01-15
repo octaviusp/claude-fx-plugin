@@ -6,7 +6,7 @@ Animated mascot companion for Claude Code. A transparent overlay that floats bes
 
 ## Features
 
-- **Reactive States** - 7 character states that respond to Claude's actions (idle, greeting, working, success, error, celebrating, sleeping)
+- **Reactive States** - 8 character states that respond to Claude's actions (idle, greeting, working, success, error, celebrating, sleeping, farewell)
 - **Floating Animation** - Subtle bobbing motion with glowing aura effect
 - **Sound Effects** - Audio feedback for each state (multi-format support)
 - **Bottom Gradient Fade** - Character fades at bottom so you can read terminal text
@@ -39,7 +39,6 @@ Edit `settings-fx.json` in the plugin folder:
     "responsive": true,
     "heightRatio": 1,
     "maxHeight": 750,
-    "position": "auto",
     "offsetX": 20,
     "offsetY": 0,
     "showOnlyWhenTerminalActive": true,
@@ -65,8 +64,7 @@ Edit `settings-fx.json` in the plugin folder:
 | `overlay.responsive` | Scale with terminal height | `true` |
 | `overlay.heightRatio` | Ratio of terminal height to use (0.0-1.0) | `1` |
 | `overlay.maxHeight` | Maximum image height in pixels | `750` |
-| `overlay.position` | Position mode: `"auto"` or `"custom"` | `"auto"` |
-| `overlay.customX/Y` | Fixed position (when position is custom) | `null` |
+| `overlay.customX/Y` | Fixed position coordinates | `null` |
 | `overlay.offsetX/Y` | Offset from terminal edge | `20`/`0` |
 | `overlay.showOnlyWhenTerminalActive` | Hide when terminal loses focus | `true` |
 | `overlay.fadeAnimation` | Smooth show/hide transitions | `true` |

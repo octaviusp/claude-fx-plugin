@@ -4,7 +4,6 @@
     "responsive": true,
     "heightRatio": 1,
     "maxHeight": 750,
-    "position": "auto",
     "customX": null,
     "customY": null,
     "offsetX": 20,
