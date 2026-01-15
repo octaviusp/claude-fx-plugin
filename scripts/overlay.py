@@ -147,9 +147,18 @@ def get_terminal_position():
 
 
 def is_our_window_frontmost(terminal_pid: int, window_id: int) -> bool:
-    """Check if our terminal window is frontmost. FAIL-SAFE: returns False."""
+    """
+    Check if our terminal window is frontmost.
+
+    Behavior:
+    - If terminal app NOT frontmost: return False (hide)
+    - If window_id known: check if frontmost among terminal's windows
+    - If window_id unknown: return True if terminal app is frontmost
+
+    This matches the original behavior that worked well.
+    """
     if not terminal_pid:
-        return False  # FAIL-SAFE: hide if no PID
+        return False  # No PID = can't verify = hide
 
     try:
         # Check app first (fast path)
@@ -157,33 +166,30 @@ def is_our_window_frontmost(terminal_pid: int, window_id: int) -> bool:
         if frontmost.processIdentifier() != terminal_pid:
             return False  # Different app is active
 
-        # Check window via CGWindowList
+        # Terminal app is frontmost - if no window_id, show (permissive)
+        if not window_id:
+            return True
+
+        # window_id known: check if OUR window is frontmost among terminals
         opts = (kCGWindowListOptionOnScreenOnly |
                 kCGWindowListExcludeDesktopElements)
         windows = CGWindowListCopyWindowInfo(opts, kCGNullWindowID)
         if not windows:
-            return False
+            return True  # Can't verify = show (permissive)
 
-        # Find frontmost normal window (layer 0)
+        # Find first layer-0 window belonging to our terminal
         for w in windows:
             if w.get('kCGWindowLayer', 0) != 0:
                 continue  # Skip menus, popups, etc.
+            if w.get('kCGWindowOwnerPID') != terminal_pid:
+                continue  # Skip other apps' windows
 
-            # First layer-0 window is the frontmost
-            w_pid = w.get('kCGWindowOwnerPID')
-            w_id = w.get('kCGWindowNumber')
+            # First terminal window in list is frontmost terminal window
+            return w.get('kCGWindowNumber') == window_id
 
-            if window_id:
-                # STRICT: Must match both PID AND window_id
-                return w_pid == terminal_pid and w_id == window_id
-            else:
-                # No window_id yet - allow if terminal is frontmost
-                # (overlay will acquire window_id lazily)
-                return w_pid == terminal_pid
-
-        return False
+        return True  # No matching windows found = show (permissive)
     except Exception:
-        return False  # FAIL-SAFE: hide on any error
+        return True  # Error = show (permissive when terminal active)
 
 
 def get_terminal_window_position(window_id: int) -> dict | None:
@@ -570,29 +576,6 @@ class Overlay:
                     self.terminal_pid = data.get('terminal_pid')
                     self.terminal_window_id = data.get('terminal_window_id')
 
-                # Lazy window_id detection: acquire when terminal is frontmost
-                if self.terminal_pid and not self.terminal_window_id:
-                    try:
-                        ws = NSWorkspace.sharedWorkspace()
-                        front = ws.frontmostApplication()
-                        if front.processIdentifier() == self.terminal_pid:
-                            opts = (kCGWindowListOptionOnScreenOnly |
-                                    kCGWindowListExcludeDesktopElements)
-                            wins = CGWindowListCopyWindowInfo(
-                                opts, kCGNullWindowID
-                            )
-                            for w in wins:
-                                if w.get('kCGWindowLayer', 0) != 0:
-                                    continue
-                                w_pid = w.get('kCGWindowOwnerPID')
-                                if w_pid == self.terminal_pid:
-                                    self.terminal_window_id = w.get(
-                                        'kCGWindowNumber'
-                                    )
-                                    break
-                    except Exception:
-                        pass
-
                 # Visibility is now event-driven via appDidActivate_
                 # Only do initial check during startup grace period
                 in_grace = (time.time() - self.startup_time) < 1.5
@@ -744,8 +727,11 @@ class Overlay:
             self.pending_show_timer = None
 
     def verifyAndShow_(self, timer):
-        """Verify our window is focused before showing."""
+        """Verify our terminal is focused before showing."""
         self.pending_show_timer = None
+        # is_our_window_frontmost handles both cases:
+        # - window_id known: check specific window is frontmost
+        # - window_id unknown: permissive (show if terminal app frontmost)
         if is_our_window_frontmost(self.terminal_pid, self.terminal_window_id):
             if not self.is_visible:
                 self.fadeIn()
