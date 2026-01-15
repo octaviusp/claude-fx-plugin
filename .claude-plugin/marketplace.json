@@ -1,0 +1,15 @@
+{
+  "name": "claude-fx-marketplace",
+  "description": "Visual and audio feedback plugin marketplace for Claude Code",
+  "owner": {
+    "name": "Octavio",
+    "url": "https://github.com/octaviusp"
+  },
+  "plugins": [
+    {
+      "name": "claude-fx-plugin",
+      "source": ".",
+      "description": "Animated mascot overlay that reacts to your coding session with visual and audio feedback"
+    }
+  ]
+}
