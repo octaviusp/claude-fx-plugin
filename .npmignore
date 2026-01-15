@@ -1,0 +1,33 @@
+# Development files
+tests/
+.coverage
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+pytest.ini
+requirements-dev.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Developer docs (keep README)
+CLAUDE.md

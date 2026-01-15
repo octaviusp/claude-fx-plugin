@@ -1,7 +1,19 @@
 {
   "name": "claude-fx-plugin",
-  "version": "0.2.0",
-  "description": "Visual and audio feedback for Claude Code hooks - persistent animated overlay",
+  "version": "1.0.0",
+  "description": "Visual and audio feedback for Claude Code - animated mascot overlay that reacts to your coding session",
+  "author": {
+    "name": "Octavio",
+    "url": "https://github.com/octaviopavon"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/octaviopavon/claude-fx-plugin"
+  },
+  "homepage": "https://github.com/octaviopavon/claude-fx-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/octaviopavon/claude-fx-plugin/issues"
+  },
   "scripts": {
     "generate-assets": "python3 scripts/generate-placeholders.py",
     "overlay": "python3 scripts/overlay.py",
@@ -15,14 +27,14 @@
     "python": ">=3.9.0"
   },
   "keywords": [
+    "claude",
     "claude-code",
     "plugin",
     "hooks",
-    "fx",
-    "visual",
-    "audio",
     "overlay",
-    "mascot"
+    "mascot",
+    "macos",
+    "animation"
   ],
   "license": "MIT"
 }

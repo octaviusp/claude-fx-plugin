@@ -27,14 +27,13 @@ def get_socket_path(session_id: int) -> Path:
 
 
 def get_session_id() -> int | None:
-    """Get session ID (terminal PID only - for singleton lock)."""
+    """Get session ID (shell PID for isolation)."""
     global _session_id
     if _session_id is None:
         info = get_terminal_info()
         if info:
-            # ALWAYS use PID for session ID (lock file)
-            # Window ID is only for visibility tracking
-            _session_id = info.get('pid')
+            # Use shell_pid for session isolation (unique per terminal window)
+            _session_id = info.get('shell_pid')
     return _session_id
 
 
@@ -52,14 +51,23 @@ _terminal_info = None
 
 
 def get_terminal_info() -> dict | None:
-    """Get terminal PID and window ID for the terminal running Claude Code."""
+    """Get terminal info for the shell running Claude Code.
+
+    Returns dict with:
+    - shell_pid: PID of the shell (for session isolation)
+    - terminal_pid: PID of terminal app (for visibility tracking)
+    - window_id: Terminal window ID (for visibility tracking)
+    """
     global _terminal_info
     if _terminal_info is not None:
         return _terminal_info
 
-    # First, find terminal PID by walking process tree
+    # Walk process tree to find shell and terminal
+    shell_pid = None
     terminal_pid = None
     pid = os.getpid()
+    prev_pid = None
+
     while pid > 1:
         try:
             result = subprocess.run(
@@ -69,9 +77,16 @@ def get_terminal_info() -> dict | None:
             parts = result.stdout.strip().split(None, 1)
             if len(parts) >= 2:
                 ppid, comm = int(parts[0]), parts[1]
+
+                # Check if this is a terminal app
                 if any(t.lower() in comm.lower() for t in TERMINAL_NAMES):
                     terminal_pid = pid
+                    # shell_pid is the process just below terminal
+                    if prev_pid:
+                        shell_pid = prev_pid
                     break
+
+                prev_pid = pid
                 pid = ppid
             else:
                 break
@@ -80,6 +95,10 @@ def get_terminal_info() -> dict | None:
 
     if not terminal_pid:
         return None
+
+    # If we didn't find a shell, use the first child we tracked
+    if not shell_pid:
+        shell_pid = prev_pid or terminal_pid
 
     # Get window ID by enumerating terminal's windows (even if not frontmost)
     window_id = None
@@ -117,7 +136,11 @@ def get_terminal_info() -> dict | None:
     except Exception:
         pass
 
-    _terminal_info = {'pid': terminal_pid, 'window_id': window_id}
+    _terminal_info = {
+        'shell_pid': shell_pid,
+        'terminal_pid': terminal_pid,
+        'window_id': window_id
+    }
     return _terminal_info
 
 
@@ -215,7 +238,7 @@ def send_state_to_overlay(state: str, tool: str = None) -> bool:
         'cmd': 'SET_STATE',
         'state': state,
         'tool': tool,
-        'terminal_pid': info.get('pid'),
+        'terminal_pid': info.get('terminal_pid'),
         'terminal_window_id': info.get('window_id')
     }
 

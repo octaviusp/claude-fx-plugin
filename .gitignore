@@ -1,13 +1,32 @@
+# Dependencies
 node_modules/
-*.log
-.DS_Store
-__pycache__/
-*.pyc
 .venv/
 *.egg-info/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
 
 # Test artifacts
 .coverage
 htmlcov/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Distribution
+dist/
+*.tar.gz

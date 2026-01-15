@@ -550,18 +550,14 @@ class Overlay(NSObject):
 
     def handle_set_state(self, msg):
         """Update state from socket message (thread-safe)."""
-        # Always update terminal info if provided (fixes stale window ID bug)
-        new_pid = msg.get('terminal_pid')
-        new_window_id = msg.get('terminal_window_id')
-
-        if new_pid and new_window_id:
-            # Validate window still exists before accepting
-            if self._is_window_valid(new_window_id):
+        # Only set terminal info ONCE on first message
+        # Don't overwrite - each overlay owns its own terminal window
+        if self.terminal_pid is None:
+            new_pid = msg.get('terminal_pid')
+            new_window_id = msg.get('terminal_window_id')
+            if new_pid:
                 self.terminal_pid = new_pid
-                self.terminal_window_id = new_window_id
-            elif self.terminal_pid is None:
-                # First time - accept even if can't validate yet
-                self.terminal_pid = new_pid
+            if new_window_id:
                 self.terminal_window_id = new_window_id
 
         new_state = msg.get('state', 'idle')
