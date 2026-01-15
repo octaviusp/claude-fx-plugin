@@ -820,6 +820,8 @@ class Overlay(NSObject):
         self.audio_enabled = audio_cfg.get('enabled', True)
         self.audio_volume = audio_cfg.get('volume', 0.5)
         self.current_sound = None  # NSSound instance
+        self.last_sound_time = 0.0  # Debounce timestamp
+        self.sound_debounce_ms = 150  # Minimum ms between sounds
 
         # Load manifest
         theme_name = self.settings.get('theme', 'default')
@@ -1183,19 +1185,25 @@ class Overlay(NSObject):
         if not self.audio_enabled:
             return
 
+        # Debounce: skip if sound played too recently
+        now = time.time() * 1000  # ms
+        if (now - self.last_sound_time) < self.sound_debounce_ms:
+            return
+        self.last_sound_time = now
+
         # Find sound file
         sound_path = find_sound_file(state, self.theme_path, self.manifest)
         if not sound_path:
             return
 
-        # Stop previous sound (prevents accumulation)
+        # Stop and release previous sound
         if self.current_sound:
             self.current_sound.stop()
             self.current_sound = None
 
-        # Create and play new sound
+        # Create and play new sound (copy data, don't reference file)
         sound = NSSound.alloc().initWithContentsOfFile_byReference_(
-            str(sound_path), True
+            str(sound_path), False  # False = copy data for reliable stop()
         )
         if sound:
             sound.setVolume_(self.audio_volume)
