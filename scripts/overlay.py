@@ -4,11 +4,14 @@ Claude FX Overlay - True transparent overlay using PyObjC (macOS).
 Displays PNG/GIF mascot with real transparency - no background window.
 """
 
-import fcntl
+import atexit
 import json
 import math
 import os
+import signal
+import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -21,6 +24,7 @@ try:
         NSCompositingOperationSourceOver, NSScreen,
         NSAnimationContext,
     )
+    from Foundation import NSObject
     # NSApplicationActivationPolicy constant (not always exported by PyObjC)
     NSApplicationActivationPolicyProhibited = 2
     from Quartz import (
@@ -42,40 +46,12 @@ FX_DIR = HOME / '.claude-fx'
 SESSION_ID = os.environ.get('CLAUDE_FX_SESSION')
 
 
-def get_session_paths() -> tuple[Path, Path]:
-    """Get state and PID file paths for this session."""
+def get_socket_path() -> Path:
+    """Get socket file path for this session."""
     if SESSION_ID:
-        return (
-            FX_DIR / f'state-{SESSION_ID}.json',
-            FX_DIR / f'overlay-{SESSION_ID}.pid'
-        )
-    return (FX_DIR / 'state.json', FX_DIR / 'overlay.pid')
+        return FX_DIR / f'sock-{SESSION_ID}.sock'
+    return FX_DIR / 'overlay.sock'
 
-
-def get_lock_file() -> Path:
-    """Get lock file path for this session."""
-    if SESSION_ID:
-        return FX_DIR / f'overlay-{SESSION_ID}.lock'
-    return FX_DIR / 'overlay.lock'
-
-
-def try_acquire_lock() -> int | None:
-    """Try to acquire exclusive lock. Returns fd or None if locked."""
-    lock_file = get_lock_file()
-    lock_file.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(lock_file), os.O_RDWR | os.O_CREAT)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        # Write our PID to lock file
-        os.ftruncate(fd, 0)
-        os.write(fd, str(os.getpid()).encode())
-        return fd  # Keep fd open to maintain lock
-    except BlockingIOError:
-        os.close(fd)
-        return None
-
-
-STATE_FILE, PID_FILE = get_session_paths()
 
 PLUGIN_ROOT = Path(os.environ.get(
     'CLAUDE_FX_ROOT',
@@ -240,10 +216,17 @@ class ImageView(NSView):
             )
 
 
-class Overlay:
+class Overlay(NSObject):
     """Transparent overlay window with animated character."""
 
-    def __init__(self):
+    def init(self):
+        self = objc.super(Overlay, self).init()
+        if self is None:
+            return None
+        self._setup()
+        return self
+
+    def _setup(self):
         self.app = NSApplication.sharedApplication()
         # Hide from dock - run as background process
         self.app.setActivationPolicy_(NSApplicationActivationPolicyProhibited)
@@ -316,11 +299,11 @@ class Overlay:
 
         # State tracking
         self.current_state = 'idle'
-        self.last_file_state = None  # Track what we last read from file
+        self.last_socket_state = None  # Track last state received via socket
         self.pending_idle_timer = None
         self.load_state_image('idle', crossfade=False)
 
-        # Visibility tracking - read from state file on first poll
+        # Visibility tracking - received via socket on first message
         self.terminal_pid = None
         self.terminal_window_id = None
         self.is_visible = True
@@ -330,7 +313,6 @@ class Overlay:
         )
         self.fade_animation = overlay_cfg.get('fadeAnimation', True)
         # Grace period: don't hide overlay for first 1.5s after startup
-        # This prevents hiding due to race conditions at startup
         self.startup_time = time.time()
 
         # Animation state
@@ -340,9 +322,23 @@ class Overlay:
         # Don't show window yet - defer until run loop starts
         self.window.setAlphaValue_(0.0)
 
-        # Start polling timer (every 0.016 seconds = 60fps for smooth movement)
+        # Socket server for IPC (replaces file polling)
+        self.socket_path = get_socket_path()
+        self.socket_server = None
+        self.socket_thread = None
+        self.state_lock = threading.Lock()
+        self.setup_socket_server()
+
+        # Animation timer (60fps for smooth movement)
         m = 'scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_'
-        self.timer = getattr(NSTimer, m)(0.016, self, 'pollState:', None, True)
+        self.timer = getattr(NSTimer, m)(
+            0.016, self, 'animationTick:', None, True
+        )
+
+        # Parent process monitor (check every 2s if terminal still alive)
+        self.parent_check_timer = getattr(NSTimer, m)(
+            2.0, self, 'checkParentAlive:', None, True
+        )
 
         # Defer window show to after run loop starts (fixes startup visibility)
         getattr(NSTimer, m)(0.1, self, 'showWindowDeferred:', None, False)
@@ -354,9 +350,48 @@ class Overlay:
             self, 'appDidActivate:',
             'NSWorkspaceDidActivateApplicationNotification', None
         )
+        nc.addObserver_selector_name_object_(
+            self, 'appDidDeactivate:',
+            'NSWorkspaceDidDeactivateApplicationNotification', None
+        )
+        nc.addObserver_selector_name_object_(
+            self, 'spaceDidChange:',
+            'NSWorkspaceActiveSpaceDidChangeNotification', None
+        )
 
-        # Write PID
-        self.write_pid()
+        # Fallback validation timer (500ms) - catches minimize, Space changes
+        self.validation_timer = None
+        m = 'scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_'
+        self.validation_timer = getattr(NSTimer, m)(
+            0.5, self, 'validateVisibility:', None, True
+        )
+
+        # Setup signal handlers for clean shutdown
+        self._setup_signal_handlers()
+
+    def _setup_signal_handlers(self):
+        """Register cleanup on signals (SIGTERM, SIGINT, SIGHUP)."""
+        def handle_signal(signum, frame):
+            self._emergency_cleanup()
+            os._exit(0)
+
+        signal.signal(signal.SIGTERM, handle_signal)
+        signal.signal(signal.SIGINT, handle_signal)
+        signal.signal(signal.SIGHUP, handle_signal)
+        atexit.register(self._emergency_cleanup)
+
+    def _emergency_cleanup(self):
+        """Fast cleanup without animations (for signal handlers)."""
+        try:
+            if self.socket_server:
+                self.socket_server.close()
+                self.socket_server = None
+            if self.socket_path and self.socket_path.exists():
+                self.socket_path.unlink(missing_ok=True)
+            if hasattr(self, 'pid_path') and self.pid_path.exists():
+                self.pid_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     def load_manifest(self) -> dict:
         """Load theme manifest."""
@@ -367,6 +402,150 @@ class Overlay:
             except Exception:
                 pass
         return {}
+
+    def setup_socket_server(self):
+        """Create Unix domain socket server for IPC."""
+        FX_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Clean up stale sockets from dead processes
+        self._cleanup_stale_sockets()
+
+        # Clean up our own stale socket file
+        if self.socket_path.exists():
+            self.socket_path.unlink()
+
+        # Create PID file for this session
+        self.pid_path = FX_DIR / f'pid-{SESSION_ID}.txt'
+        self.pid_path.write_text(str(os.getpid()))
+
+        # Create socket
+        self.socket_server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.socket_server.bind(str(self.socket_path))
+        self.socket_server.listen(5)
+        self.socket_server.settimeout(0.1)  # Non-blocking with timeout
+
+        # Start listener thread
+        self.socket_thread = threading.Thread(
+            target=self.socket_listener_loop,
+            daemon=True
+        )
+        self.socket_thread.start()
+
+    def _cleanup_stale_sockets(self):
+        """Remove sockets from dead processes."""
+        for sock_file in FX_DIR.glob('sock-*.sock'):
+            try:
+                session_id = sock_file.stem.replace('sock-', '')
+                pid_file = FX_DIR / f'pid-{session_id}.txt'
+
+                if pid_file.exists():
+                    pid = int(pid_file.read_text().strip())
+                    try:
+                        os.kill(pid, 0)
+                        continue  # Process alive - skip
+                    except ProcessLookupError:
+                        pass  # Process dead - clean up
+
+                # Remove stale socket and PID file
+                sock_file.unlink(missing_ok=True)
+                if pid_file.exists():
+                    pid_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def socket_listener_loop(self):
+        """Accept connections and process commands (runs in thread)."""
+        while self.socket_server:
+            try:
+                conn, _ = self.socket_server.accept()
+                self.handle_client(conn)
+            except socket.timeout:
+                continue  # Check if server still running
+            except OSError:
+                break  # Socket closed
+            except Exception:
+                break
+
+    def handle_client(self, conn):
+        """Process single client connection."""
+        try:
+            # Receive message (max 4KB)
+            data = conn.recv(4096).decode('utf-8').strip()
+            if not data:
+                return
+
+            msg = json.loads(data)
+            cmd = msg.get('cmd', 'SET_STATE')
+
+            if cmd == 'PING':
+                conn.sendall(b'PONG\n')
+            elif cmd == 'SHUTDOWN':
+                self.schedule_shutdown()
+                conn.sendall(b'{"status": "ok"}\n')
+            elif cmd == 'SET_STATE':
+                self.handle_set_state(msg)
+                conn.sendall(b'{"status": "ok"}\n')
+            else:
+                conn.sendall(b'{"status": "error", "message": "unknown"}\n')
+        except Exception as e:
+            try:
+                err = json.dumps({"status": "error", "message": str(e)})
+                conn.sendall(f'{err}\n'.encode('utf-8'))
+            except Exception:
+                pass
+        finally:
+            conn.close()
+
+    def handle_set_state(self, msg):
+        """Update state from socket message (thread-safe)."""
+        # Always update terminal info if provided (fixes stale window ID bug)
+        new_pid = msg.get('terminal_pid')
+        new_window_id = msg.get('terminal_window_id')
+
+        if new_pid and new_window_id:
+            # Validate window still exists before accepting
+            if self._is_window_valid(new_window_id):
+                self.terminal_pid = new_pid
+                self.terminal_window_id = new_window_id
+            elif self.terminal_pid is None:
+                # First time - accept even if can't validate yet
+                self.terminal_pid = new_pid
+                self.terminal_window_id = new_window_id
+
+        new_state = msg.get('state', 'idle')
+
+        # Track last received state
+        with self.state_lock:
+            self.last_socket_state = new_state
+
+        # Schedule UI update on main thread (NSTimer is main-thread only)
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            'updateStateFromSocket:', new_state, False
+        )
+
+    def updateStateFromSocket_(self, new_state):
+        """Update state on main thread (called from socket thread)."""
+        if new_state != self.current_state:
+            self.change_state(new_state)
+
+    def schedule_shutdown(self):
+        """Schedule shutdown from socket command."""
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            'shutdown', None, False
+        )
+
+    def checkParentAlive_(self, timer):
+        """Check if parent terminal is still alive (every 2s)."""
+        if not self.terminal_pid:
+            return
+        try:
+            # Signal 0 checks if process exists without sending signal
+            os.kill(self.terminal_pid, 0)
+        except ProcessLookupError:
+            # Parent died - shut down gracefully
+            self.shutdown()
+        except PermissionError:
+            pass  # Process exists but we can't signal it - that's fine
 
     def calculate_position(self, overlay_cfg: dict) -> tuple:
         """Calculate window position based on settings."""
@@ -508,21 +687,33 @@ class Overlay:
         # Remove notification observer
         nc = NSWorkspace.sharedWorkspace().notificationCenter()
         nc.removeObserver_(self)
-        # Stop the poll timer
+        # Stop the animation timer
         if self.timer:
             self.timer.invalidate()
             self.timer = None
+        # Stop parent check timer
+        if hasattr(self, 'parent_check_timer') and self.parent_check_timer:
+            self.parent_check_timer.invalidate()
+            self.parent_check_timer = None
+        # Stop validation timer
+        if hasattr(self, 'validation_timer') and self.validation_timer:
+            self.validation_timer.invalidate()
+            self.validation_timer = None
         # Cancel any pending timers
         if self.pending_idle_timer:
             self.pending_idle_timer.invalidate()
             self.pending_idle_timer = None
         self.cancel_pending_show()
-        # Clean up PID file and lock file
-        if PID_FILE.exists():
-            PID_FILE.unlink()
-        lock_file = get_lock_file()
-        if lock_file.exists():
-            lock_file.unlink(missing_ok=True)
+        # Close socket server
+        if self.socket_server:
+            self.socket_server.close()
+            self.socket_server = None
+        # Clean up socket file
+        if self.socket_path.exists():
+            self.socket_path.unlink(missing_ok=True)
+        # Clean up PID file
+        if hasattr(self, 'pid_path') and self.pid_path.exists():
+            self.pid_path.unlink(missing_ok=True)
         # Terminate
         self.app.terminate_(None)
 
@@ -564,60 +755,43 @@ class Overlay:
         frame.origin.y = y
         self.window.setFrame_display_(frame, True)
 
-    def pollState_(self, timer):
-        """Check state file for updates (called by NSTimer)."""
+    def animationTick_(self, timer):
+        """Run animations and track terminal position (called by NSTimer)."""
         try:
-            if STATE_FILE.exists():
-                data = json.loads(STATE_FILE.read_text())
-                new_state = data.get('state', 'idle')
+            # Visibility check during startup grace period
+            in_grace = (time.time() - self.startup_time) < 1.5
+            if in_grace and self.show_only_when_active:
+                if not is_our_window_frontmost(
+                    self.terminal_pid, self.terminal_window_id
+                ):
+                    if self.is_visible:
+                        self.fadeOut()
 
-                # Get terminal info from state file (only once, on first poll)
-                if self.terminal_pid is None:
-                    self.terminal_pid = data.get('terminal_pid')
-                    self.terminal_window_id = data.get('terminal_window_id')
-
-                # Visibility is now event-driven via appDidActivate_
-                # Only do initial check during startup grace period
-                in_grace = (time.time() - self.startup_time) < 1.5
-                if in_grace and self.show_only_when_active:
-                    # During grace period, verify we should be visible
-                    if not is_our_window_frontmost(
-                        self.terminal_pid, self.terminal_window_id
-                    ):
-                        if self.is_visible:
-                            self.fadeOut()
-
-                # Track terminal position and size (follow window)
-                if self.is_visible and self.terminal_window_id:
-                    current_pos = get_terminal_window_position(
-                        self.terminal_window_id
-                    )
-                    if current_pos:
-                        # Check if terminal size changed (responsive resize)
-                        old_h = self.last_terminal_pos.get('h') if \
-                            self.last_terminal_pos else None
-                        if self.responsive and old_h != current_pos['h']:
-                            new_max = self.calculate_responsive_height(
-                                current_pos['h']
+            # Track terminal position and size (follow window)
+            if self.is_visible and self.terminal_window_id:
+                current_pos = get_terminal_window_position(
+                    self.terminal_window_id
+                )
+                if current_pos:
+                    # Check if terminal size changed (responsive resize)
+                    old_h = self.last_terminal_pos.get('h') if \
+                        self.last_terminal_pos else None
+                    if self.responsive and old_h != current_pos['h']:
+                        new_max = self.calculate_responsive_height(
+                            current_pos['h']
+                        )
+                        if new_max != self.max_height:
+                            self.max_height = new_max
+                            self.calculate_size(self.current_state)
+                            self.load_state_image(
+                                self.current_state, crossfade=False
                             )
-                            if new_max != self.max_height:
-                                self.max_height = new_max
-                                self.calculate_size(self.current_state)
-                                self.load_state_image(
-                                    self.current_state, crossfade=False
-                                )
-                                self.resize_window()
+                            self.resize_window()
 
-                        # Update position if changed
-                        if current_pos != self.last_terminal_pos:
-                            self.last_terminal_pos = current_pos
-                            self.update_position(current_pos)
-
-                # Update state only if FILE state changed (not internal state)
-                # This prevents re-triggering after temporal auto-transition
-                if self.is_visible and new_state != self.last_file_state:
-                    self.last_file_state = new_state
-                    self.change_state(new_state)
+                    # Update position if changed
+                    if current_pos != self.last_terminal_pos:
+                        self.last_terminal_pos = current_pos
+                        self.update_position(current_pos)
 
             # Run animations (floating + aura) every frame
             if self.is_visible:
@@ -641,11 +815,6 @@ class Overlay:
 
         except Exception:
             pass
-
-    def write_pid(self):
-        """Write PID file."""
-        FX_DIR.mkdir(parents=True, exist_ok=True)
-        PID_FILE.write_text(str(os.getpid()))
 
     def showWindowDeferred_(self, timer):
         """Show window after run loop has started."""
@@ -736,26 +905,119 @@ class Overlay:
             if not self.is_visible:
                 self.fadeIn()
 
+    def appDidDeactivate_(self, notification):
+        """Called when app loses focus - hide if our terminal deactivated."""
+        try:
+            app = notification.userInfo()['NSWorkspaceApplicationKey']
+            deactivated_pid = app.processIdentifier()
+
+            if deactivated_pid == self.terminal_pid:
+                # Our terminal lost focus - hide immediately
+                self.cancel_pending_show()
+                if self.is_visible:
+                    self.fadeOut()
+        except Exception:
+            pass
+
+    def spaceDidChange_(self, notification):
+        """Called when user switches Spaces - re-check visibility."""
+        # Delay check slightly to let Space switch complete
+        m = 'scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_'
+        getattr(NSTimer, m)(
+            0.1, self, 'checkVisibilityAfterSpaceChange:', None, False
+        )
+
+    def checkVisibilityAfterSpaceChange_(self, timer):
+        """Check visibility after Space change."""
+        if not self.terminal_window_id:
+            return
+
+        # Check if our window is on-screen (on current Space)
+        window_on_screen = self._is_window_on_screen(self.terminal_window_id)
+
+        if not window_on_screen:
+            self.cancel_pending_show()
+            if self.is_visible:
+                self.fadeOut()
+        elif is_our_window_frontmost(
+            self.terminal_pid, self.terminal_window_id
+        ):
+            if not self.is_visible:
+                self.schedule_show_check()
+
+    def validateVisibility_(self, timer):
+        """Periodic ground-truth check via Quartz (catches minimize, etc.)."""
+        if not self.terminal_window_id:
+            return
+
+        # Skip during startup grace period
+        if (time.time() - self.startup_time) < 1.5:
+            return
+
+        # Check if window is on-screen (catches minimize, Space change)
+        window_on_screen = self._is_window_on_screen(self.terminal_window_id)
+
+        if not window_on_screen:
+            # Window minimized or on different Space
+            self.cancel_pending_show()
+            if self.is_visible:
+                self.fadeOut()
+        elif is_our_window_frontmost(
+            self.terminal_pid, self.terminal_window_id
+        ):
+            # Window visible and frontmost - ensure overlay shown
+            if not self.is_visible:
+                self.fadeIn()
+
+    def _is_window_on_screen(self, window_id: int) -> bool:
+        """Check if a window is currently visible on screen."""
+        if not window_id:
+            return False
+        try:
+            opts = (kCGWindowListOptionOnScreenOnly |
+                    kCGWindowListExcludeDesktopElements)
+            windows = CGWindowListCopyWindowInfo(opts, kCGNullWindowID)
+            if windows:
+                for w in windows:
+                    if w.get('kCGWindowNumber') == window_id:
+                        return True
+        except Exception:
+            pass
+        return False
+
+    def _is_window_valid(self, window_id: int) -> bool:
+        """Check if a window ID exists (including off-screen/minimized)."""
+        if not window_id:
+            return False
+        try:
+            # Query ALL windows, not just on-screen
+            windows = CGWindowListCopyWindowInfo(0, kCGNullWindowID)
+            if windows:
+                for w in windows:
+                    if w.get('kCGWindowNumber') == window_id:
+                        return True
+        except Exception:
+            pass
+        return False
+
     def run(self):
         """Start the overlay."""
         try:
             self.app.run()
         finally:
-            if PID_FILE.exists():
-                PID_FILE.unlink()
-            lock_file = get_lock_file()
-            if lock_file.exists():
-                lock_file.unlink(missing_ok=True)
+            # Clean up socket on exit
+            if self.socket_server:
+                self.socket_server.close()
+            if self.socket_path.exists():
+                self.socket_path.unlink(missing_ok=True)
+            # Clean up PID file
+            if hasattr(self, 'pid_path') and self.pid_path.exists():
+                self.pid_path.unlink(missing_ok=True)
 
 
 def main():
-    lock_fd = try_acquire_lock()
-    if lock_fd is None:
-        print("Overlay already running (locked)")
-        sys.exit(0)
-
-    overlay = Overlay()
-    overlay.lock_fd = lock_fd  # Keep fd open to maintain lock
+    # Socket binding provides singleton enforcement (bind fails if exists)
+    overlay = Overlay.alloc().init()
     overlay.run()
 
 
