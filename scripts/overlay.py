@@ -249,6 +249,9 @@ class Overlay:
             'showOnlyWhenTerminalActive', True
         )
         self.fade_animation = overlay_cfg.get('fadeAnimation', True)
+        # Grace period: don't hide overlay for first 1.5s after startup
+        # This prevents hiding due to race conditions at startup
+        self.startup_time = __import__('time').time()
 
         # Show window
         self.window.makeKeyAndOrderFront_(None)
@@ -460,8 +463,10 @@ class Overlay:
                     self.terminal_pid = data.get('terminal_pid')
                     self.terminal_window_id = data.get('terminal_window_id')
 
-                # Check visibility if tracking is enabled
-                if self.show_only_when_active:
+                # Check visibility (skip during 1.5s startup grace period)
+                import time
+                in_grace = (time.time() - self.startup_time) < 1.5
+                if self.show_only_when_active and not in_grace:
                     should_show = is_terminal_window_visible(
                         self.terminal_pid, self.terminal_window_id
                     )
