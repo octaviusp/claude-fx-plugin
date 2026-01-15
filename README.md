@@ -74,10 +74,12 @@ Edit `settings-fx.json` in the plugin folder:
     "enabled": true,
     "backgroundColor": "#1a1a2e",
     "borderColor": "#4a9eff",
+    "borderWidth": 2,
     "borderRadius": 8,
     "fontFamily": "SF Mono",
     "fontSize": 13,
     "fontColor": "#ffffff",
+    "padding": 10,
     "displayDuration": 3.0
   },
   "emotionOverlays": {
@@ -114,10 +116,12 @@ Edit `settings-fx.json` in the plugin folder:
 | `speechBubble.enabled` | Show speech bubbles | `true` |
 | `speechBubble.backgroundColor` | Bubble background (hex) | `#1a1a2e` |
 | `speechBubble.borderColor` | Bubble border (hex) | `#4a9eff` |
+| `speechBubble.borderWidth` | Border thickness in pixels | `2` |
 | `speechBubble.borderRadius` | Corner radius in pixels | `8` |
 | `speechBubble.fontFamily` | Font family name | `SF Mono` |
 | `speechBubble.fontSize` | Font size in points | `13` |
 | `speechBubble.fontColor` | Text color (hex) | `#ffffff` |
+| `speechBubble.padding` | Inner padding in pixels | `10` |
 | `speechBubble.displayDuration` | Seconds to show bubble | `3.0` |
 
 #### Emotion Overlays
@@ -176,6 +180,8 @@ farewell.aiff    # Session end
 ```
 
 **Supported formats:** `.wav`, `.mp3`, `.aiff`, `.m4a`, `.caf`, `.aac`
+
+Sound playback uses native **NSSound** API (in-process, no subprocess spawning).
 
 ## Commands
 
@@ -247,8 +253,8 @@ claude-fx-plugin/
 ├── hooks/
 │   └── hooks.json        # Hook event mappings
 ├── scripts/
-│   ├── hook-handler.py   # Processes hooks, plays sounds
-│   ├── overlay.py        # PyObjC transparent overlay
+│   ├── hook-handler.py   # Processes hooks, sends commands via socket
+│   ├── overlay.py        # PyObjC overlay + NSSound audio
 │   └── setup.py          # Dependency checker
 ├── themes/default/
 │   ├── characters/       # PNG images per state
@@ -267,6 +273,11 @@ claude-fx-plugin/
 | macOS | Full support |
 | Linux | Not supported (coming soon) |
 | Windows | Not supported |
+
+## What's New in v2.1
+
+- **Sound System Rewrite** - NSSound replaces afplay, eliminating coreaudiod memory bloat
+- **In-Process Audio** - Sound plays within overlay process, no subprocess spawning
 
 ## What's New in v2.0
 

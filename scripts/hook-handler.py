@@ -12,12 +12,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 # Session ID cache (terminal PID, set once per hook invocation)
 _session_id = None
-
-# Track sound processes for cleanup
-_sound_processes = []
 
 # Paths
 HOME = Path.home()
@@ -30,7 +28,7 @@ def get_socket_path(session_id: int) -> Path:
     return FX_DIR / f'sock-{session_id}.sock'
 
 
-def get_session_id() -> int | None:
+def get_session_id() -> Optional[int]:
     """Get session ID (shell PID for isolation)."""
     global _session_id
     if _session_id is None:
@@ -54,7 +52,7 @@ TERMINAL_NAMES = {
 _terminal_info = None
 
 
-def get_terminal_info() -> dict | None:
+def get_terminal_info() -> Optional[dict]:
     """Get terminal info for the shell running Claude Code.
 
     Returns dict with:
@@ -437,94 +435,34 @@ def start_overlay():
         )
 
 
-def load_manifest(theme: str) -> dict:
-    """Load theme manifest.json."""
-    manifest_path = PLUGIN_ROOT / 'themes' / theme / 'manifest.json'
-    if manifest_path.exists():
-        try:
-            return json.loads(manifest_path.read_text())
-        except Exception:
-            pass
-    return {}
+def send_sound_to_overlay(state: str) -> bool:
+    """Send sound playback command to overlay via socket.
 
-
-# Supported audio formats on macOS (afplay)
-AUDIO_EXTENSIONS = ('.wav', '.mp3', '.m4a', '.aiff', '.aif', '.caf', '.aac')
-
-
-def find_sound_file(state: str, theme: str, manifest: dict) -> Path | None:
+    Sound is played by overlay.py using NSSound (in-process, no subprocess).
+    This eliminates afplay process accumulation that bloats coreaudiod.
     """
-    Find sound file for state. Priority:
-    1. Manifest-specified path
-    2. Sound file matching state name (e.g., greeting.wav for 'greeting')
-    """
-    sounds_dir = PLUGIN_ROOT / 'themes' / theme / 'sounds'
+    session_id = get_session_id()
+    if not session_id:
+        return False
 
-    # Check manifest first
-    state_cfg = manifest.get('states', {}).get(state, {})
-    manifest_sound = state_cfg.get('sound')
-    if manifest_sound:
-        sound_path = PLUGIN_ROOT / 'themes' / theme / manifest_sound
-        if sound_path.exists():
-            return sound_path
+    socket_path = get_socket_path(session_id)
+    if not socket_path.exists():
+        return False
 
-    # Fall back to state-named file (e.g., greeting.wav, greeting.mp3)
-    if sounds_dir.exists():
-        for ext in AUDIO_EXTENSIONS:
-            sound_path = sounds_dir / f'{state}{ext}'
-            if sound_path.exists():
-                return sound_path
-
-    return None
-
-
-def play_sound(state: str, settings: dict):
-    """Play sound for state (macOS). Uses afplay for native playback."""
-    global _sound_processes
-
-    # Check if audio is enabled
-    audio_cfg = settings.get('audio', {})
-    if not audio_cfg.get('enabled', True):
-        return
-
-    volume = audio_cfg.get('volume', 0.5)
-    theme = settings.get('theme', 'default')
-
-    # Load manifest and find sound file
-    manifest = load_manifest(theme)
-    sound_path = find_sound_file(state, theme, manifest)
-
-    if not sound_path:
-        return
-
-    # Kill previous sound to prevent accumulation (protects coreaudiod)
-    for proc in _sound_processes:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-    _sound_processes = []
+    msg = {'cmd': 'PLAY_SOUND', 'state': state}
 
     try:
-        proc = subprocess.Popen(
-            ['afplay', '-v', str(volume), str(sound_path)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        _sound_processes = [proc]  # Only track current sound
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(0.5)
+        sock.connect(str(socket_path))
+        sock.sendall(f'{json.dumps(msg)}\n'.encode('utf-8'))
+        response = sock.recv(1024).decode('utf-8').strip()
+        sock.close()
+        return response.startswith('{"status": "ok"}')
+    except (socket.timeout, ConnectionRefusedError, FileNotFoundError):
+        return False
     except Exception:
-        pass
-
-
-def kill_sound_processes():
-    """Kill any running sound processes."""
-    global _sound_processes
-    for proc in _sound_processes:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-    _sound_processes = []
+        return False
 
 
 def main():
@@ -572,9 +510,8 @@ def main():
     # Handle SessionEnd - show farewell and shutdown overlay
     if event == 'SessionEnd':
         send_state_to_overlay(state, tool)
-        play_sound('farewell', settings)
+        send_sound_to_overlay('farewell')
         time.sleep(0.3)  # Brief delay for farewell to show
-        kill_sound_processes()  # Stop any playing sounds
         shutdown_overlay()  # Graceful + forceful fallback
         kill_orphaned_overlays()  # Clean up any strays
         sys.exit(0)
@@ -589,8 +526,8 @@ def main():
         time.sleep(0.3)
         send_state_to_overlay(state, tool)
 
-    # Play sound
-    play_sound(state, settings)
+    # Play sound (via overlay's NSSound - no subprocess)
+    send_sound_to_overlay(state)
 
     # Always exit 0 to not block Claude
     sys.exit(0)

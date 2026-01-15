@@ -195,19 +195,22 @@ class TestSettingsIntegration:
 
         mock_popen.assert_not_called()
 
-    def test_audio_disabled_no_sound(self, handler, plugin_env, mocker):
-        """Sound doesn't play when audio disabled."""
-        # Write disabled audio settings
-        settings = {"overlay": {"enabled": True}, "audio": {"enabled": False}}
-        settings_file = plugin_env["plugin_root"] / "settings-fx.json"
-        settings_file.write_text(json.dumps(settings))
+    def test_sound_sent_via_socket(self, handler, plugin_env, mocker):
+        """Sound is sent to overlay via socket."""
+        import socket as sock_mod
 
-        mock_popen = mocker.patch("subprocess.Popen")
+        # Create socket file
+        socket_file = plugin_env["fx_dir"] / "sock-12345.sock"
+        socket_file.write_text("")
 
-        loaded = handler.load_settings()
-        handler.play_sound("greeting", loaded)
+        mocker.patch.object(handler, "get_session_id", return_value=12345)
 
-        mock_popen.assert_not_called()
+        mock_socket = MagicMock()
+        mock_socket.recv.return_value = b'{"status": "ok"}'
+        mocker.patch.object(sock_mod, "socket", return_value=mock_socket)
+
+        result = handler.send_sound_to_overlay("greeting")
+        assert result is True
 
 
 class TestErrorDetectionPatterns:

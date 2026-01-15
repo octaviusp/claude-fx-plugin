@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Optional
 
 from PIL import Image, ImageFilter
 
@@ -24,6 +25,7 @@ try:
     from AppKit import (
         NSWorkspace, NSFont, NSFontAttributeName,
         NSForegroundColorAttributeName, NSEvent,
+        NSSound,
     )
     from Cocoa import (
         NSApplication, NSWindow, NSView, NSImage, NSColor, NSTimer,
@@ -152,6 +154,10 @@ EMOTION_OVERLAYS = {
     'working': ['focus_lines'],
 }
 
+# Supported audio formats (NSSound)
+AUDIO_EXTENSIONS = ('.wav', '.mp3', '.m4a', '.aiff', '.aif', '.caf', '.aac')
+
+
 # Speech bubble message pools
 DEFAULT_MESSAGES = {
     'greeting': [
@@ -231,6 +237,34 @@ def load_messages(plugin_root: Path) -> dict:
         except Exception:
             pass
     return DEFAULT_MESSAGES
+
+
+def find_sound_file(
+    state: str, theme_path: Path, manifest: dict
+) -> Optional[Path]:
+    """
+    Find sound file for state. Priority:
+    1. Manifest-specified path
+    2. Sound file matching state name (e.g., greeting.wav for 'greeting')
+    """
+    sounds_dir = theme_path / 'sounds'
+
+    # Check manifest first
+    state_cfg = manifest.get('states', {}).get(state, {})
+    manifest_sound = state_cfg.get('sound')
+    if manifest_sound:
+        sound_path = theme_path / manifest_sound
+        if sound_path.exists():
+            return sound_path
+
+    # Fall back to state-named file (e.g., greeting.wav, greeting.mp3)
+    if sounds_dir.exists():
+        for ext in AUDIO_EXTENSIONS:
+            sound_path = sounds_dir / f'{state}{ext}'
+            if sound_path.exists():
+                return sound_path
+
+    return None
 
 
 def hex_to_nscolor(hex_color: str) -> NSColor:
@@ -364,7 +398,7 @@ def is_our_window_frontmost(terminal_pid: int, window_id: int) -> bool:
         return True  # Error = show (permissive when terminal active)
 
 
-def get_terminal_window_position(window_id: int) -> dict | None:
+def get_terminal_window_position(window_id: int) -> Optional[dict]:
     """Get position of specific terminal window by ID."""
     if not window_id:
         return None
@@ -782,6 +816,14 @@ class Overlay(NSObject):
             'enabled', True
         )
 
+        # Audio settings (NSSound - in-process, no subprocess)
+        audio_cfg = self.settings.get('audio', {})
+        self.audio_enabled = audio_cfg.get('enabled', True)
+        self.audio_volume = audio_cfg.get('volume', 0.5)
+        self.current_sound = None  # NSSound instance
+        self.last_sound_time = 0.0  # Debounce timestamp
+        self.sound_debounce_ms = 150  # Minimum ms between sounds
+
         # Load manifest
         theme_name = self.settings.get('theme', 'default')
         self.theme_path = PLUGIN_ROOT / 'themes' / theme_name
@@ -1069,6 +1111,10 @@ class Overlay(NSObject):
                 folder = msg.get('folder')
                 result = self.handle_change_character(folder)
                 conn.sendall(f'{json.dumps(result)}\n'.encode('utf-8'))
+            elif cmd == 'PLAY_SOUND':
+                state = msg.get('state', 'idle')
+                self.schedule_play_sound(state)
+                conn.sendall(b'{"status": "ok"}\n')
             else:
                 conn.sendall(b'{"status": "error", "message": "unknown"}\n')
         except Exception as e:
@@ -1128,6 +1174,42 @@ class Overlay(NSObject):
         )
 
         return {"status": "ok", "folder": folder}
+
+    def schedule_play_sound(self, state: str):
+        """Schedule sound playback on main thread (thread-safe)."""
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            'playSoundForState:', state, False
+        )
+
+    def playSoundForState_(self, state: str):
+        """Play sound for state using NSSound (main thread)."""
+        if not self.audio_enabled:
+            return
+
+        # Debounce: skip if sound played too recently
+        now = time.time() * 1000  # ms
+        if (now - self.last_sound_time) < self.sound_debounce_ms:
+            return
+        self.last_sound_time = now
+
+        # Find sound file
+        sound_path = find_sound_file(state, self.theme_path, self.manifest)
+        if not sound_path:
+            return
+
+        # Stop and release previous sound
+        if self.current_sound:
+            self.current_sound.stop()
+            self.current_sound = None
+
+        # Create and play new sound (copy data, don't reference file)
+        sound = NSSound.alloc().initWithContentsOfFile_byReference_(
+            str(sound_path), False  # False = copy data for reliable stop()
+        )
+        if sound:
+            sound.setVolume_(self.audio_volume)
+            sound.play()
+            self.current_sound = sound
 
     def reloadCurrentImage(self):
         """Reload current state image (after character folder change)."""
@@ -1470,7 +1552,7 @@ class Overlay(NSObject):
         self.image_view_front.setFrame_(view_rect)
         self.image_view_back.setFrame_(view_rect)
 
-    def get_pid_from_window_id(self, window_id: int) -> int | None:
+    def get_pid_from_window_id(self, window_id: int) -> Optional[int]:
         """Get the owner PID of a window by its ID."""
         try:
             windows = CGWindowListCopyWindowInfo(

@@ -189,7 +189,7 @@ class TestGetSocketPath:
         assert "sock-99999.sock" in str(socket_path)
 
     def test_without_session_id(self, monkeypatch, tmp_path):
-        """Returns default socket path without SESSION_ID."""
+        """Raises RuntimeError when SESSION_ID is not set."""
         reset_overlay_module()
         monkeypatch.delenv("CLAUDE_FX_SESSION", raising=False)
         monkeypatch.setenv("CLAUDE_FX_ROOT", str(tmp_path))
@@ -198,8 +198,8 @@ class TestGetSocketPath:
             overlay = import_overlay()
             monkeypatch.setattr(overlay, "SESSION_ID", None)
 
-            socket_path = overlay.get_socket_path()
-            assert str(socket_path).endswith("overlay.sock")
+            with pytest.raises(RuntimeError, match="CLAUDE_FX_SESSION"):
+                overlay.get_socket_path()
 
 
 class TestLoadSettings:
