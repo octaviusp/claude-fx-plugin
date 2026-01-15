@@ -1,0 +1,42 @@
+{
+  "name": "default",
+  "description": "Default minimal theme with subtle feedback",
+  "version": "1.0.0",
+  "effects": {
+    "PreToolUse": {
+      "message": "Working...",
+      "sound": "start.wav",
+      "animation": "working.gif"
+    },
+    "PreToolUse:Write": {
+      "message": "Writing file...",
+      "sound": "write.wav",
+      "animation": "writing.gif"
+    },
+    "PreToolUse:Edit": {
+      "message": "Editing...",
+      "sound": "edit.wav",
+      "animation": "editing.gif"
+    },
+    "PreToolUse:Bash": {
+      "message": "Running command...",
+      "sound": "bash.wav",
+      "animation": "terminal.gif"
+    },
+    "PostToolUse": {
+      "message": "Done!",
+      "sound": "complete.wav",
+      "animation": "done.gif"
+    },
+    "Stop": {
+      "message": "Task complete!",
+      "sound": "finish.wav",
+      "animation": "finish.gif"
+    },
+    "Notification": {
+      "message": "Notification",
+      "sound": "notify.wav",
+      "animation": "notify.gif"
+    }
+  }
+}

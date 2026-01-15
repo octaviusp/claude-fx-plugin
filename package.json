@@ -1,0 +1,32 @@
+{
+  "name": "claude-fx-plugin",
+  "version": "0.1.0",
+  "description": "Visual and audio feedback for Claude Code hooks",
+  "type": "module",
+  "main": "scripts/fx-handler.js",
+  "scripts": {
+    "dev": "node --watch scripts/fx-handler.js",
+    "lint": "eslint scripts",
+    "test": "node --test 'tests/**/*.test.js'",
+    "test:single": "node --test"
+  },
+  "dependencies": {
+    "play-sound": "^1.1.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "eslint": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "claude-code",
+    "plugin",
+    "hooks",
+    "fx",
+    "visual",
+    "audio"
+  ],
+  "license": "MIT"
+}

@@ -1,0 +1,13 @@
+{
+  "theme": "default",
+  "volume": 0.5,
+  "overlay": {
+    "enabled": true,
+    "position": "bottom-right",
+    "size": 200,
+    "duration": 2000
+  },
+  "audio": {
+    "enabled": true
+  }
+}
