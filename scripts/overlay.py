@@ -138,25 +138,27 @@ class Overlay:
         self.root.overrideredirect(True)
         self.root.attributes('-topmost', True)
 
-        # macOS transparency
-        try:
-            self.root.attributes('-transparent', True)
-            self.root.config(bg='systemTransparent')
-            self.bg_color = 'systemTransparent'
-        except Exception:
-            # Fallback for Linux
-            self.root.attributes('-alpha', 0.95)
-            self.bg_color = '#1a1a1a'
-            self.root.config(bg=self.bg_color)
-
-        # Canvas for the image
+        # Size
         self.size = 150
+
+        # macOS transparency using color key (black becomes invisible)
+        self.transparent_color = 'black'
+        try:
+            self.root.config(bg=self.transparent_color)
+            self.root.wm_attributes('-transparent', True)
+        except Exception:
+            # Fallback for Linux - use alpha
+            self.root.attributes('-alpha', 0.95)
+            self.root.config(bg='#1a1a1a')
+
+        # Canvas with transparent background
         self.canvas = tk.Canvas(
             self.root,
             width=self.size,
             height=self.size,
-            bg=self.bg_color,
-            highlightthickness=0
+            bg=self.transparent_color,
+            highlightthickness=0,
+            bd=0
         )
         self.canvas.pack()
 
@@ -204,11 +206,11 @@ class Overlay:
         return {}
 
     def position_window(self):
-        """Position overlay next to terminal."""
+        """Position overlay at top-right of terminal."""
         pos = get_terminal_position()
-        # Bottom-right of terminal with offset
+        # Top-right of terminal (below title bar)
         x = pos['x'] + pos['w'] - self.size - 20
-        y = pos['y'] + pos['h'] - self.size - 40
+        y = pos['y'] + 40
         self.root.geometry(f"{self.size}x{self.size}+{x}+{y}")
 
     def load_state_gif(self, state: str):
