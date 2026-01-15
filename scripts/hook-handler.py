@@ -299,6 +299,30 @@ def shutdown_overlay():
         pass  # Best effort
 
 
+def change_character_folder(folder: str) -> dict:
+    """Send character folder change command to overlay."""
+    session_id = get_session_id()
+    if not session_id:
+        return {"status": "error", "message": "no session"}
+
+    socket_path = get_socket_path(session_id)
+    if not socket_path.exists():
+        return {"status": "error", "message": "overlay not running"}
+
+    msg = {'cmd': 'CHANGE_CHARACTER', 'folder': folder}
+
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(1.0)
+        sock.connect(str(socket_path))
+        sock.sendall(f'{json.dumps(msg)}\n'.encode('utf-8'))
+        response = sock.recv(4096).decode('utf-8').strip()
+        sock.close()
+        return json.loads(response)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 def cleanup_legacy_files():
     """Remove old state/pid/lock files from file-based IPC era."""
     if not FX_DIR.exists():
@@ -406,6 +430,13 @@ def play_sound(state: str, settings: dict):
 
 def main():
     """Main entry point."""
+    # Handle CLI commands (e.g., change-character)
+    if len(sys.argv) > 1 and sys.argv[1] == 'change-character':
+        folder = sys.argv[2] if len(sys.argv) > 2 else 'characters'
+        result = change_character_folder(folder)
+        print(json.dumps(result))
+        sys.exit(0 if result.get('status') == 'ok' else 1)
+
     # Read hook event
     data = read_stdin()
     event = data.get('hook_event_name', '')

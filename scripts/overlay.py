@@ -300,6 +300,9 @@ class Overlay(NSObject):
         self.theme_path = PLUGIN_ROOT / 'themes' / theme_name
         self.manifest = self.load_manifest()
 
+        # Character folder override (session-specific, not persisted)
+        self.character_folder_override = None  # e.g., "characters2"
+
         # Get initial terminal position for responsive sizing
         initial_pos = get_terminal_position()
         if self.responsive and initial_pos:
@@ -537,6 +540,10 @@ class Overlay(NSObject):
             elif cmd == 'SET_STATE':
                 self.handle_set_state(msg)
                 conn.sendall(b'{"status": "ok"}\n')
+            elif cmd == 'CHANGE_CHARACTER':
+                folder = msg.get('folder')
+                result = self.handle_change_character(folder)
+                conn.sendall(f'{json.dumps(result)}\n'.encode('utf-8'))
             else:
                 conn.sendall(b'{"status": "error", "message": "unknown"}\n')
         except Exception as e:
@@ -570,6 +577,36 @@ class Overlay(NSObject):
         self.performSelectorOnMainThread_withObject_waitUntilDone_(
             'updateStateFromSocket:', new_state, False
         )
+
+    def handle_change_character(self, folder: str) -> dict:
+        """Change character folder for this session (thread-safe)."""
+        if not folder:
+            return {"status": "error", "message": "folder name required"}
+
+        # Validate folder exists
+        folder_path = self.theme_path / folder
+        if not folder_path.exists() or not folder_path.is_dir():
+            return {"status": "error", "message": f"not found: {folder}"}
+
+        # Check for at least one PNG
+        pngs = list(folder_path.glob('*.png'))
+        if not pngs:
+            return {"status": "error", "message": f"no PNG files in: {folder}"}
+
+        # Set override (thread-safe)
+        with self.state_lock:
+            self.character_folder_override = folder
+
+        # Reload current state image on main thread
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            'reloadCurrentImage', None, False
+        )
+
+        return {"status": "ok", "folder": folder}
+
+    def reloadCurrentImage(self):
+        """Reload current state image (after character folder change)."""
+        self.load_state_image(self.current_state, crossfade=True)
 
     def updateStateFromSocket_(self, new_state):
         """Update state on main thread (called from socket thread)."""
@@ -654,7 +691,19 @@ class Overlay(NSObject):
         animation = state_config.get('animation', '')
 
         if animation:
+            # Apply character folder override if set
+            original_animation = animation
+            if self.character_folder_override:
+                animation = animation.replace(
+                    'characters/', f'{self.character_folder_override}/', 1
+                )
+
             img_path = self.theme_path / animation
+
+            # Fallback to original if override path doesn't exist
+            if self.character_folder_override and not img_path.exists():
+                img_path = self.theme_path / original_animation
+
             if img_path.exists():
                 if self.gradient_enabled and self.gradient_percentage > 0:
                     # PIL path: load, resize, apply gradient, convert

@@ -121,6 +121,7 @@ The plugin adds slash commands to Claude Code:
 |---------|-------------|
 | `/claude-fx:setup` | Check and install dependencies |
 | `/claude-fx:change-fx` | Guide to customize characters and sounds |
+| `/claude-fx:change-character` | Switch character folder (session-only) |
 | `/claude-fx:clean-fx` | Emergency cleanup (kill stuck overlays) |
 
 ## Requirements
