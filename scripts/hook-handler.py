@@ -79,17 +79,29 @@ def get_terminal_info() -> dict | None:
     if not terminal_pid:
         return None
 
-    # Now find the frontmost window for this terminal (the active one)
+    # Now find the window for this terminal
+    # Check if terminal is still frontmost to avoid race condition
+    # If user switched away, we can't reliably detect the correct window
     try:
+        from AppKit import NSWorkspace
         from Quartz import (
             CGWindowListCopyWindowInfo,
             kCGWindowListOptionOnScreenOnly,
             kCGNullWindowID,
         )
+
+        # Check if our terminal is currently frontmost
+        frontmost = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if frontmost.processIdentifier() != terminal_pid:
+            # User switched away - fall back to PID-only tracking
+            # This means overlay shows for any window of this terminal app
+            _terminal_info = {'pid': terminal_pid, 'window_id': None}
+            return _terminal_info
+
+        # Terminal is frontmost, we can trust the window detection
         windows = CGWindowListCopyWindowInfo(
             kCGWindowListOptionOnScreenOnly, kCGNullWindowID
         )
-        # Find windows belonging to our terminal, pick the first (topmost)
         for w in windows:
             if w.get('kCGWindowOwnerPID') == terminal_pid:
                 window_id = w.get('kCGWindowNumber')
