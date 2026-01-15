@@ -112,7 +112,13 @@ def check_quartz():
         from Quartz import CGWindowListCopyWindowInfo
         return True, "available"
     except ImportError:
-        return False, "not installed (optional)"
+        return False, "not installed"
+
+
+def is_homebrew_python():
+    """Check if running Homebrew-managed Python."""
+    exe = sys.executable.lower()
+    return 'homebrew' in exe or 'cellar' in exe
 
 
 def get_install_commands(missing, plat, python_version):
@@ -120,9 +126,14 @@ def get_install_commands(missing, plat, python_version):
     commands = []
     version_suffix = f"{python_version[0]}.{python_version[1]}"
 
+    # Determine pip flags for Homebrew Python
+    pip_flags = ""
+    if plat == 'macos' and is_homebrew_python():
+        pip_flags = " --break-system-packages"
+
     if 'pillow' in missing:
         if plat == 'macos':
-            commands.append(("Pillow", "pip3 install pillow"))
+            commands.append(("Pillow", f"pip3 install pillow{pip_flags}"))
         elif plat == 'linux':
             commands.append(("Pillow", "pip3 install pillow"))
         else:
@@ -156,10 +167,8 @@ def get_install_commands(missing, plat, python_version):
                 ))
 
     if 'quartz' in missing and plat == 'macos':
-        commands.append((
-            "Quartz (optional)",
-            "pip3 install pyobjc-framework-Quartz"
-        ))
+        cmd = f"pip3 install pyobjc-framework-Quartz{pip_flags}"
+        commands.append(("Quartz", cmd))
 
     return commands
 
@@ -232,7 +241,7 @@ def check_all():
     if not ok and plat == 'macos':
         missing.append('quartz')
 
-    all_ok = len([m for m in missing if m != 'quartz']) == 0
+    all_ok = len(missing) == 0
     return all_ok, results, missing
 
 
@@ -248,30 +257,37 @@ def print_results(results, missing):
 
     plat, _ = get_platform_info()
     if plat == 'macos':
-        is_optional = 'quartz' in missing
-        label = "Quartz (optional)" if is_optional else "Quartz"
-        print_status(label, results['quartz'][0], results['quartz'][1])
+        print_status("Quartz", results['quartz'][0], results['quartz'][1])
 
     print()
 
 
 def print_install_instructions(missing, commands):
     """Print installation instructions."""
-    required_missing = [m for m in missing if m != 'quartz']
-
-    if not required_missing:
+    if not missing:
         return
 
+    # Describe what each dependency does
+    dep_desc = {
+        'python': 'Core runtime',
+        'pillow': 'Image/GIF processing',
+        'tkinter': 'GUI overlay window',
+        'quartz': 'Terminal position detection (macOS)',
+    }
+
     print(colored("  Missing dependencies:", Colors.YELLOW))
-    for m in required_missing:
-        print(f"    - {m}")
+    for m in missing:
+        desc = dep_desc.get(m, '')
+        if desc:
+            print(f"    - {m}: {desc}")
+        else:
+            print(f"    - {m}")
     print()
 
     print(colored("  To fix, run these commands:", Colors.BOLD))
     print()
     for name, cmd in commands:
-        if 'optional' not in name.lower():
-            print(f"    {colored('$', Colors.CYAN)} {cmd}")
+        print(f"    {colored('$', Colors.CYAN)} {cmd}")
     print()
 
     restart = colored('restart Claude Code', Colors.YELLOW)
@@ -331,19 +347,14 @@ def main(force_check=False, auto_install=False, quiet=False):
     python_ver = get_python_version()
     commands = get_install_commands(missing, plat, python_ver)
 
-    required_commands = [
-        (n, c) for n, c in commands
-        if 'optional' not in n.lower()
-    ]
-
-    if not required_commands:
+    if not commands:
         save_setup_status(True)
         return True
 
     print_install_instructions(missing, commands)
 
     if auto_install:
-        run_install(required_commands)
+        run_install(commands)
         all_ok, _, _ = check_all()
         save_setup_status(all_ok)
         return all_ok
