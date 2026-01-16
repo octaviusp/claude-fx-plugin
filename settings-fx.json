@@ -45,7 +45,7 @@
   },
   "aura": {
     "enabled": true,
-    "color": "#6699ff",
+    "color": "#ff4444",
     "opacity": 0.5,
     "minRadius": 8,
     "maxRadius": 14,
