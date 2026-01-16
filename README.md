@@ -2,9 +2,13 @@
 
 Animated mascot companion for Claude Code. A transparent overlay that floats beside your terminal and reacts to Claude's activity in real-time.
 
-https://github.com/user-attachments/assets/587f0788-55ef-4d38-8987-dd6c4b273fbe
 
-<img src="themes/default/characters/greeting.png" height="150" alt="Mascot">
+
+https://github.com/user-attachments/assets/03d4edce-3420-4977-a373-1d0c1fdf364e
+
+
+
+<img src="themes/default/characters/greeting.png" height="325" alt="Mascot">
 
 ## Features
 
