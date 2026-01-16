@@ -197,6 +197,16 @@ def load_settings() -> dict:
     return {}
 
 
+def save_settings(settings: dict) -> bool:
+    """Save settings to settings-fx.json."""
+    settings_file = PLUGIN_ROOT / 'settings-fx.json'
+    try:
+        settings_file.write_text(json.dumps(settings, indent=2) + '\n')
+        return True
+    except Exception:
+        return False
+
+
 def apply_bottom_gradient(pil_image: Image.Image, percentage: float):
     """Apply alpha gradient to bottom portion of image.
 
@@ -865,8 +875,10 @@ class Overlay(NSObject):
         self.theme_path = PLUGIN_ROOT / 'themes' / theme_name
         self.manifest = self.load_manifest()
 
-        # Character folder override (session-specific, not persisted)
-        self.character_folder_override = None  # e.g., "characters2"
+        # Character folder (persisted in settings)
+        self.character_folder_override = self.settings.get(
+            'characterFolder', 'characters'
+        )
 
         # Image cache: state -> NSImage (avoids re-processing each time)
         self._image_cache: dict = {}
@@ -1190,7 +1202,7 @@ class Overlay(NSObject):
         )
 
     def handle_change_character(self, folder: str) -> dict:
-        """Change character folder for this session (thread-safe)."""
+        """Change character folder permanently (thread-safe)."""
         if not folder:
             return {"status": "error", "message": "folder name required"}
 
@@ -1202,11 +1214,17 @@ class Overlay(NSObject):
         # Check for at least one PNG
         pngs = list(folder_path.glob('*.png'))
         if not pngs:
-            return {"status": "error", "message": f"no PNG files in: {folder}"}
+            return {
+                "status": "error",
+                "message": f"no PNG files in: {folder}"
+            }
 
         # Set override (thread-safe)
         with self.state_lock:
             self.character_folder_override = folder
+            # Save to settings file for persistence
+            self.settings['characterFolder'] = folder
+            save_settings(self.settings)
 
         # Reload current state image on main thread
         self.performSelectorOnMainThread_withObject_waitUntilDone_(
