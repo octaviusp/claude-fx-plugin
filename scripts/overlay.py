@@ -301,6 +301,17 @@ def hex_to_nscolor(hex_color: str) -> NSColor:
     return NSColor.whiteColor()
 
 
+def hex_to_rgba(hex_color: str, alpha: float = 1.0) -> tuple:
+    """Convert hex color string to RGBA tuple (0.0-1.0 range)."""
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) == 6:
+        r = int(hex_color[0:2], 16) / 255.0
+        g = int(hex_color[2:4], 16) / 255.0
+        b = int(hex_color[4:6], 16) / 255.0
+        return (r, g, b, alpha)
+    return (1.0, 1.0, 1.0, alpha)
+
+
 def generate_shadow_image(pil_image: Image.Image, blur: int = 20,
                           opacity: float = 0.3) -> Image.Image:
     """Generate a shadow from a PIL image."""
@@ -862,6 +873,15 @@ class Overlay(NSObject):
             'enabled', True
         )
 
+        # Aura settings
+        aura_cfg = self.settings.get('aura', {})
+        self.aura_enabled = aura_cfg.get('enabled', True)
+        self.aura_color = hex_to_rgba(aura_cfg.get('color', '#6699ff'))
+        self.aura_opacity = aura_cfg.get('opacity', AURA_OPACITY)
+        self.aura_min_radius = aura_cfg.get('minRadius', AURA_MIN_RADIUS)
+        self.aura_max_radius = aura_cfg.get('maxRadius', AURA_MAX_RADIUS)
+        self.aura_period = aura_cfg.get('period', AURA_PERIOD)
+
         # Audio settings (NSSound - in-process, no subprocess)
         audio_cfg = self.settings.get('audio', {})
         self.audio_enabled = audio_cfg.get('enabled', True)
@@ -954,9 +974,12 @@ class Overlay(NSObject):
         # Setup aura glow effect (layer-backed for shadow)
         self.content_view.setWantsLayer_(True)
         layer = self.content_view.layer()
-        layer.setShadowColor_(CGColorCreateGenericRGB(*AURA_COLOR))
-        layer.setShadowOpacity_(AURA_OPACITY)
-        layer.setShadowRadius_(AURA_MIN_RADIUS)
+        if self.aura_enabled:
+            layer.setShadowColor_(CGColorCreateGenericRGB(*self.aura_color))
+            layer.setShadowOpacity_(self.aura_opacity)
+            layer.setShadowRadius_(self.aura_min_radius)
+        else:
+            layer.setShadowOpacity_(0.0)
         layer.setShadowOffset_((0, 0))  # Centered glow
 
         # State tracking
@@ -1306,6 +1329,24 @@ class Overlay(NSObject):
         self.emotions_enabled = self.settings.get('emotionOverlays', {}).get(
             'enabled', True
         )
+
+        # Aura settings
+        aura_cfg = self.settings.get('aura', {})
+        self.aura_enabled = aura_cfg.get('enabled', True)
+        self.aura_color = hex_to_rgba(aura_cfg.get('color', '#6699ff'))
+        self.aura_opacity = aura_cfg.get('opacity', AURA_OPACITY)
+        self.aura_min_radius = aura_cfg.get('minRadius', AURA_MIN_RADIUS)
+        self.aura_max_radius = aura_cfg.get('maxRadius', AURA_MAX_RADIUS)
+        self.aura_period = aura_cfg.get('period', AURA_PERIOD)
+
+        # Update aura layer
+        layer = self.content_view.layer()
+        if self.aura_enabled:
+            layer.setShadowColor_(CGColorCreateGenericRGB(*self.aura_color))
+            layer.setShadowOpacity_(self.aura_opacity)
+            layer.setShadowRadius_(self.aura_min_radius)
+        else:
+            layer.setShadowOpacity_(0.0)
 
         # Character folder
         self.character_folder_override = self.settings.get(
@@ -1890,12 +1931,13 @@ class Overlay(NSObject):
                 self.window.setFrame_display_(frame, False)
 
                 # Aura: pulsing glow radius
-                aura_wave = 0.5 + 0.5 * math.sin(
-                    2 * math.pi * elapsed / AURA_PERIOD
-                )
-                aura_range = AURA_MAX_RADIUS - AURA_MIN_RADIUS
-                radius = AURA_MIN_RADIUS + aura_range * aura_wave
-                self.content_view.layer().setShadowRadius_(radius)
+                if self.aura_enabled:
+                    aura_wave = 0.5 + 0.5 * math.sin(
+                        2 * math.pi * elapsed / self.aura_period
+                    )
+                    aura_range = self.aura_max_radius - self.aura_min_radius
+                    radius = self.aura_min_radius + aura_range * aura_wave
+                    self.content_view.layer().setShadowRadius_(radius)
 
                 # Update emotion overlay animation
                 if self.emotions_enabled and self.emotion_view.emotions:

@@ -54,18 +54,26 @@ Edit `settings-fx.json` in the plugin folder:
   },
   "speechBubble": {
     "enabled": true,
-    "displayDuration": 3.0
+    "backgroundColor": "#1a1a2e",
+    "borderColor": "#4a9eff",
+    "fontColor": "#ffffff"
   },
-  "emotionOverlays": {
-    "enabled": true
+  "emotionOverlays": { "enabled": true },
+  "aura": {
+    "enabled": true,
+    "color": "#6699ff",
+    "opacity": 0.5,
+    "minRadius": 8,
+    "maxRadius": 14
   }
 }
 ```
 
 **Key Settings:**
-- **Bottom Gradient:** Fades the bottom of the image (default 80%)
+- **Aura:** Pulsing glow effect (color, opacity, radius)
+- **Speech Bubbles:** Styled bubbles (backgroundColor, borderColor, fontColor)
 - **Immersion:** Breathing, sway, cursor tracking animations
-- **Speech Bubbles:** Customizable styled message bubbles
+- **Bottom Gradient:** Fades the bottom of the image (default 80%)
 - **Emotion Overlays:** Sparkles, sweat drops, zzz effects
 
 Changes take effect on next Claude Code session.

@@ -20,7 +20,7 @@
     "volume": 0.5
   },
   "theme": "default",
-  "characterFolder": "characters",
+  "characterFolder": "character3",
   "immersion": {
     "breathing": true,
     "sway": true,
@@ -42,5 +42,13 @@
   },
   "emotionOverlays": {
     "enabled": true
+  },
+  "aura": {
+    "enabled": true,
+    "color": "#6699ff",
+    "opacity": 0.5,
+    "minRadius": 8,
+    "maxRadius": 14,
+    "period": 1.8
   }
 }
