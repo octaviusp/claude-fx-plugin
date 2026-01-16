@@ -189,7 +189,8 @@ Sound playback uses native **NSSound** API (in-process, no subprocess spawning).
 |---------|-------------|
 | `/claude-fx:setup` | Check and install dependencies |
 | `/claude-fx:change-fx` | Guide to customize characters and sounds |
-| `/claude-fx:change-character` | Switch character folder (session-only) |
+| `/claude-fx:change-character` | Switch character folder (persistent) |
+| `/claude-fx:change-fx-settings` | Customize settings using natural language |
 | `/claude-fx:clean-fx` | Emergency cleanup (kill stuck overlays) |
 
 ## Immersion Effects
@@ -273,6 +274,14 @@ claude-fx-plugin/
 | macOS | Full support |
 | Linux | Not supported (coming soon) |
 | Windows | Not supported |
+
+## What's New in v2.2
+
+- **Natural Language Settings** - Use `/claude-fx:change-fx-settings` to customize settings conversationally
+- **Persistent Character Selection** - Character folder choice now persists across sessions
+- **CLAUDE_FX_SESSION Support** - Explicit session targeting via environment variable
+- **Performance Improvements** - Enhanced reliability and optimizations
+- **New Character Pack** - Added character3 theme with 6 new character states
 
 ## What's New in v2.1
 

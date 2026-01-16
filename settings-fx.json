@@ -20,6 +20,7 @@
     "volume": 0.5
   },
   "theme": "default",
+  "characterFolder": "characters",
   "immersion": {
     "breathing": true,
     "sway": true,

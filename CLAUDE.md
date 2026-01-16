@@ -46,6 +46,7 @@ claude-fx-plugin/
 │   ├── setup.md              # /claude-fx:setup slash command
 │   ├── change-fx.md          # /claude-fx:change-fx customization guide
 │   ├── change-character.md   # /claude-fx:change-character switch characters
+│   ├── change-fx-settings.md # /claude-fx:change-fx-settings natural language customization
 │   └── clean-fx.md           # /claude-fx:clean-fx emergency cleanup
 ├── themes/
 │   └── default/
@@ -326,8 +327,11 @@ ls ~/.claude-fx/sock-*.sock
 # Clear setup status (re-run checks)
 rm ~/.claude-fx/setup_ok
 
-# Change character folder (session-specific)
+# Change character folder (persistent)
 python3 scripts/hook-handler.py change-character characters2
+
+# Reload settings after manual edits
+python3 scripts/hook-handler.py reload-settings
 
 # Emergency cleanup
 pkill -f 'python3.*overlay.py'

@@ -197,6 +197,16 @@ def load_settings() -> dict:
     return {}
 
 
+def save_settings(settings: dict) -> bool:
+    """Save settings to settings-fx.json."""
+    settings_file = PLUGIN_ROOT / 'settings-fx.json'
+    try:
+        settings_file.write_text(json.dumps(settings, indent=2) + '\n')
+        return True
+    except Exception:
+        return False
+
+
 def apply_bottom_gradient(pil_image: Image.Image, percentage: float):
     """Apply alpha gradient to bottom portion of image.
 
@@ -865,8 +875,10 @@ class Overlay(NSObject):
         self.theme_path = PLUGIN_ROOT / 'themes' / theme_name
         self.manifest = self.load_manifest()
 
-        # Character folder override (session-specific, not persisted)
-        self.character_folder_override = None  # e.g., "characters2"
+        # Character folder (persisted in settings)
+        self.character_folder_override = self.settings.get(
+            'characterFolder', 'characters'
+        )
 
         # Image cache: state -> NSImage (avoids re-processing each time)
         self._image_cache: dict = {}
@@ -1154,6 +1166,9 @@ class Overlay(NSObject):
                 state = msg.get('state', 'idle')
                 self.schedule_play_sound(state)
                 conn.sendall(b'{"status": "ok"}\n')
+            elif cmd == 'RELOAD_SETTINGS':
+                result = self.handle_reload_settings()
+                conn.sendall(f'{json.dumps(result)}\n'.encode('utf-8'))
             else:
                 conn.sendall(b'{"status": "error", "message": "unknown"}\n')
         except Exception as e:
@@ -1190,7 +1205,7 @@ class Overlay(NSObject):
         )
 
     def handle_change_character(self, folder: str) -> dict:
-        """Change character folder for this session (thread-safe)."""
+        """Change character folder permanently (thread-safe)."""
         if not folder:
             return {"status": "error", "message": "folder name required"}
 
@@ -1202,11 +1217,17 @@ class Overlay(NSObject):
         # Check for at least one PNG
         pngs = list(folder_path.glob('*.png'))
         if not pngs:
-            return {"status": "error", "message": f"no PNG files in: {folder}"}
+            return {
+                "status": "error",
+                "message": f"no PNG files in: {folder}"
+            }
 
         # Set override (thread-safe)
         with self.state_lock:
             self.character_folder_override = folder
+            # Save to settings file for persistence
+            self.settings['characterFolder'] = folder
+            save_settings(self.settings)
 
         # Reload current state image on main thread
         self.performSelectorOnMainThread_withObject_waitUntilDone_(
@@ -1214,6 +1235,96 @@ class Overlay(NSObject):
         )
 
         return {"status": "ok", "folder": folder}
+
+    def handle_reload_settings(self) -> dict:
+        """Reload settings from file and apply changes (thread-safe)."""
+        try:
+            # Reload settings from disk
+            new_settings = load_settings()
+            if not new_settings:
+                return {
+                    "status": "error",
+                    "message": "failed to load settings"
+                }
+
+            # Apply settings on main thread
+            with self.state_lock:
+                self.settings = new_settings
+
+            # Schedule settings application on main thread
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                'applyReloadedSettings', None, False
+            )
+
+            return {"status": "ok", "message": "settings reloaded"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def applyReloadedSettings(self):
+        """Apply reloaded settings to overlay (main thread)."""
+        # Overlay settings
+        overlay_cfg = self.settings.get('overlay', {})
+        self.base_max_height = overlay_cfg.get('maxHeight', DEFAULT_MAX_HEIGHT)
+        self.offset_x = overlay_cfg.get('offsetX', DEFAULT_OFFSET_X)
+        self.offset_y = overlay_cfg.get('offsetY', DEFAULT_OFFSET_Y)
+        self.custom_x = overlay_cfg.get('customX')
+        self.custom_y = overlay_cfg.get('customY')
+        self.responsive = overlay_cfg.get('responsive', True)
+        self.show_only_when_active = overlay_cfg.get(
+            'showOnlyWhenTerminalActive', True
+        )
+        self.fade_animation = overlay_cfg.get('fadeAnimation', True)
+
+        # Bottom gradient
+        gradient_cfg = overlay_cfg.get('bottomGradient', {})
+        self.gradient_enabled = gradient_cfg.get('enabled', True)
+        self.gradient_percentage = gradient_cfg.get('percentage', 0.8)
+
+        # Audio settings
+        audio_cfg = self.settings.get('audio', {})
+        self.audio_enabled = audio_cfg.get('enabled', True)
+        self.audio_volume = audio_cfg.get('volume', 0.5)
+
+        # Immersion settings
+        immersion_cfg = self.settings.get('immersion', {})
+        self.breathing_enabled = immersion_cfg.get('breathing', True)
+        self.sway_enabled = immersion_cfg.get('sway', True)
+        self.cursor_influence_enabled = immersion_cfg.get(
+            'cursorInfluence', True
+        )
+        self.cursor_influence_strength = immersion_cfg.get(
+            'cursorInfluenceStrength', 0.5
+        )
+        self.transitions_enabled = immersion_cfg.get('transitions', True)
+
+        # Speech bubble settings
+        self.speech_cfg = self.settings.get('speechBubble', {})
+        self.speech_enabled = self.speech_cfg.get('enabled', True)
+        self.speech_duration = self.speech_cfg.get('displayDuration', 3.0)
+
+        # Emotion overlay settings
+        self.emotions_enabled = self.settings.get('emotionOverlays', {}).get(
+            'enabled', True
+        )
+
+        # Character folder
+        self.character_folder_override = self.settings.get(
+            'characterFolder', 'characters'
+        )
+
+        # Clear image cache to force reload with new settings
+        self._image_cache = {}
+
+        # Recalculate responsive height if enabled
+        if self.responsive:
+            pos = get_terminal_position()
+            if pos:
+                self.max_height = self.calculate_responsive_height(pos)
+            else:
+                self.max_height = self.base_max_height
+
+        # Reload current image with new settings
+        self.reloadCurrentImage()
 
     def schedule_play_sound(self, state: str):
         """Schedule sound playback on main thread (thread-safe)."""
