@@ -42,6 +42,16 @@ def get_session_id() -> Optional[int]:
     """Get session ID (shell PID for isolation)."""
     global _session_id
     if _session_id is None:
+        # Check for explicit session ID from environment (for manual commands)
+        env_session = os.environ.get('CLAUDE_FX_SESSION')
+        if env_session:
+            try:
+                _session_id = int(env_session)
+                return _session_id
+            except ValueError:
+                pass
+
+        # Otherwise detect from process tree
         info = get_terminal_info()
         if info:
             # Use shell_pid for session isolation (unique per terminal window)
