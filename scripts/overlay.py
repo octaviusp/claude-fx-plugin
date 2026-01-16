@@ -1270,15 +1270,15 @@ class Overlay(NSObject):
         self.custom_x = overlay_cfg.get('customX')
         self.custom_y = overlay_cfg.get('customY')
         self.responsive = overlay_cfg.get('responsive', True)
-        self.show_only_when_terminal_active = overlay_cfg.get(
+        self.show_only_when_active = overlay_cfg.get(
             'showOnlyWhenTerminalActive', True
         )
         self.fade_animation = overlay_cfg.get('fadeAnimation', True)
 
         # Bottom gradient
         gradient_cfg = overlay_cfg.get('bottomGradient', {})
-        self.bottom_gradient_enabled = gradient_cfg.get('enabled', True)
-        self.bottom_gradient_percentage = gradient_cfg.get('percentage', 0.8)
+        self.gradient_enabled = gradient_cfg.get('enabled', True)
+        self.gradient_percentage = gradient_cfg.get('percentage', 0.8)
 
         # Audio settings
         audio_cfg = self.settings.get('audio', {})
@@ -1287,38 +1287,25 @@ class Overlay(NSObject):
 
         # Immersion settings
         immersion_cfg = self.settings.get('immersion', {})
-        self.immersion_breathing = immersion_cfg.get('breathing', True)
-        self.immersion_sway = immersion_cfg.get('sway', True)
-        self.immersion_cursor_influence = immersion_cfg.get(
+        self.breathing_enabled = immersion_cfg.get('breathing', True)
+        self.sway_enabled = immersion_cfg.get('sway', True)
+        self.cursor_influence_enabled = immersion_cfg.get(
             'cursorInfluence', True
         )
-        self.immersion_cursor_strength = immersion_cfg.get(
+        self.cursor_influence_strength = immersion_cfg.get(
             'cursorInfluenceStrength', 0.5
         )
-        self.immersion_transitions = immersion_cfg.get('transitions', True)
+        self.transitions_enabled = immersion_cfg.get('transitions', True)
 
         # Speech bubble settings
-        bubble_cfg = self.settings.get('speechBubble', {})
-        self.speech_bubble_enabled = bubble_cfg.get('enabled', True)
-        self.speech_bubble_bg = bubble_cfg.get(
-            'backgroundColor', '#1a1a2e'
-        )
-        self.speech_bubble_border = bubble_cfg.get('borderColor', '#4a9eff')
-        self.speech_bubble_border_width = bubble_cfg.get('borderWidth', 2)
-        self.speech_bubble_border_radius = bubble_cfg.get('borderRadius', 8)
-        self.speech_bubble_font_family = bubble_cfg.get(
-            'fontFamily', 'SF Mono'
-        )
-        self.speech_bubble_font_size = bubble_cfg.get('fontSize', 13)
-        self.speech_bubble_font_color = bubble_cfg.get(
-            'fontColor', '#ffffff'
-        )
-        self.speech_bubble_padding = bubble_cfg.get('padding', 10)
-        self.speech_bubble_duration = bubble_cfg.get('displayDuration', 3.0)
+        self.speech_cfg = self.settings.get('speechBubble', {})
+        self.speech_enabled = self.speech_cfg.get('enabled', True)
+        self.speech_duration = self.speech_cfg.get('displayDuration', 3.0)
 
-        # Emotion overlays
-        emotion_cfg = self.settings.get('emotionOverlays', {})
-        self.emotion_overlays_enabled = emotion_cfg.get('enabled', True)
+        # Emotion overlay settings
+        self.emotions_enabled = self.settings.get('emotionOverlays', {}).get(
+            'enabled', True
+        )
 
         # Character folder
         self.character_folder_override = self.settings.get(
