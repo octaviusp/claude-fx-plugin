@@ -427,6 +427,30 @@ def change_character_folder(folder: str) -> dict:
         return {"status": "error", "message": str(e)}
 
 
+def reload_settings() -> dict:
+    """Send settings reload command to overlay."""
+    session_id = get_session_id()
+    if not session_id:
+        return {"status": "error", "message": "no session"}
+
+    socket_path = get_socket_path(session_id)
+    if not socket_path.exists():
+        return {"status": "error", "message": "overlay not running"}
+
+    msg = {'cmd': 'RELOAD_SETTINGS'}
+
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(1.0)
+        sock.connect(str(socket_path))
+        sock.sendall(f'{json.dumps(msg)}\n'.encode('utf-8'))
+        response = sock.recv(4096).decode('utf-8').strip()
+        sock.close()
+        return json.loads(response)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 def cleanup_legacy_files():
     """Remove old state/pid/lock files from file-based IPC era."""
     if not FX_DIR.exists():
@@ -497,10 +521,15 @@ def send_sound_to_overlay(state: str) -> bool:
 
 def main():
     """Main entry point."""
-    # Handle CLI commands (e.g., change-character)
+    # Handle CLI commands (e.g., change-character, reload-settings)
     if len(sys.argv) > 1 and sys.argv[1] == 'change-character':
         folder = sys.argv[2] if len(sys.argv) > 2 else 'characters'
         result = change_character_folder(folder)
+        print(json.dumps(result))
+        sys.exit(0 if result.get('status') == 'ok' else 1)
+
+    if len(sys.argv) > 1 and sys.argv[1] == 'reload-settings':
+        result = reload_settings()
         print(json.dumps(result))
         sys.exit(0 if result.get('status') == 'ok' else 1)
 

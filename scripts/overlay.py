@@ -1166,6 +1166,9 @@ class Overlay(NSObject):
                 state = msg.get('state', 'idle')
                 self.schedule_play_sound(state)
                 conn.sendall(b'{"status": "ok"}\n')
+            elif cmd == 'RELOAD_SETTINGS':
+                result = self.handle_reload_settings()
+                conn.sendall(f'{json.dumps(result)}\n'.encode('utf-8'))
             else:
                 conn.sendall(b'{"status": "error", "message": "unknown"}\n')
         except Exception as e:
@@ -1232,6 +1235,109 @@ class Overlay(NSObject):
         )
 
         return {"status": "ok", "folder": folder}
+
+    def handle_reload_settings(self) -> dict:
+        """Reload settings from file and apply changes (thread-safe)."""
+        try:
+            # Reload settings from disk
+            new_settings = load_settings()
+            if not new_settings:
+                return {
+                    "status": "error",
+                    "message": "failed to load settings"
+                }
+
+            # Apply settings on main thread
+            with self.state_lock:
+                self.settings = new_settings
+
+            # Schedule settings application on main thread
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                'applyReloadedSettings', None, False
+            )
+
+            return {"status": "ok", "message": "settings reloaded"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def applyReloadedSettings(self):
+        """Apply reloaded settings to overlay (main thread)."""
+        # Overlay settings
+        overlay_cfg = self.settings.get('overlay', {})
+        self.base_max_height = overlay_cfg.get('maxHeight', DEFAULT_MAX_HEIGHT)
+        self.offset_x = overlay_cfg.get('offsetX', DEFAULT_OFFSET_X)
+        self.offset_y = overlay_cfg.get('offsetY', DEFAULT_OFFSET_Y)
+        self.custom_x = overlay_cfg.get('customX')
+        self.custom_y = overlay_cfg.get('customY')
+        self.responsive = overlay_cfg.get('responsive', True)
+        self.show_only_when_terminal_active = overlay_cfg.get(
+            'showOnlyWhenTerminalActive', True
+        )
+        self.fade_animation = overlay_cfg.get('fadeAnimation', True)
+
+        # Bottom gradient
+        gradient_cfg = overlay_cfg.get('bottomGradient', {})
+        self.bottom_gradient_enabled = gradient_cfg.get('enabled', True)
+        self.bottom_gradient_percentage = gradient_cfg.get('percentage', 0.8)
+
+        # Audio settings
+        audio_cfg = self.settings.get('audio', {})
+        self.audio_enabled = audio_cfg.get('enabled', True)
+        self.audio_volume = audio_cfg.get('volume', 0.5)
+
+        # Immersion settings
+        immersion_cfg = self.settings.get('immersion', {})
+        self.immersion_breathing = immersion_cfg.get('breathing', True)
+        self.immersion_sway = immersion_cfg.get('sway', True)
+        self.immersion_cursor_influence = immersion_cfg.get(
+            'cursorInfluence', True
+        )
+        self.immersion_cursor_strength = immersion_cfg.get(
+            'cursorInfluenceStrength', 0.5
+        )
+        self.immersion_transitions = immersion_cfg.get('transitions', True)
+
+        # Speech bubble settings
+        bubble_cfg = self.settings.get('speechBubble', {})
+        self.speech_bubble_enabled = bubble_cfg.get('enabled', True)
+        self.speech_bubble_bg = bubble_cfg.get(
+            'backgroundColor', '#1a1a2e'
+        )
+        self.speech_bubble_border = bubble_cfg.get('borderColor', '#4a9eff')
+        self.speech_bubble_border_width = bubble_cfg.get('borderWidth', 2)
+        self.speech_bubble_border_radius = bubble_cfg.get('borderRadius', 8)
+        self.speech_bubble_font_family = bubble_cfg.get(
+            'fontFamily', 'SF Mono'
+        )
+        self.speech_bubble_font_size = bubble_cfg.get('fontSize', 13)
+        self.speech_bubble_font_color = bubble_cfg.get(
+            'fontColor', '#ffffff'
+        )
+        self.speech_bubble_padding = bubble_cfg.get('padding', 10)
+        self.speech_bubble_duration = bubble_cfg.get('displayDuration', 3.0)
+
+        # Emotion overlays
+        emotion_cfg = self.settings.get('emotionOverlays', {})
+        self.emotion_overlays_enabled = emotion_cfg.get('enabled', True)
+
+        # Character folder
+        self.character_folder_override = self.settings.get(
+            'characterFolder', 'characters'
+        )
+
+        # Clear image cache to force reload with new settings
+        self._image_cache = {}
+
+        # Recalculate responsive height if enabled
+        if self.responsive:
+            pos = get_terminal_position()
+            if pos:
+                self.max_height = self.calculate_responsive_height(pos)
+            else:
+                self.max_height = self.base_max_height
+
+        # Reload current image with new settings
+        self.reloadCurrentImage()
 
     def schedule_play_sound(self, state: str):
         """Schedule sound playback on main thread (thread-safe)."""
